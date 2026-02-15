@@ -6,7 +6,7 @@
 	<string id="offsetTitle">Device pressure correction (hPa)</string>
 	<string id="steadyTitle">Threshold for pressure trend (hPa)</string>
 	<string id="timeTitle">Time for measuring trend (hours)</string>
-	<string id="tempTitle">Display current temperature?</string>
+	<string id="tempTitle">Display details?</string>
 	<string id="hemiTitle">Northern or Southern hemisphere?</string>
 	<string id="origTitle">Use original pressure reading method?</string>
 	<string id="pressureError">Outside sensible limits</string>
@@ -20,7 +20,6 @@
 	<string id="Yes">Yes</string>
 	<string id="No">No</string>
 	<string id="appDisplayTitle">Title for glance loop</string>
-	<string id="GPS">Acquiring GPS</string>
 	<string id="TrendS">Steady</string>
 	<string id="TrendR">Rising</string>
 	<string id="TrendF">Falling</string>

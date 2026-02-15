@@ -3,8 +3,8 @@ import Toybox.Lang;
 import Toybox.WatchUi;
 
 class SimplyWeatherApp extends Application.AppBase {
-	hidden var weatherView as SimplyWeatherView or Null;
-	hidden var weatherGlanceView as SimplyWeatherGlanceView or Null;
+    hidden var weatherView as SimplyWeatherView or Null;
+    hidden var weatherGlanceView as SimplyWeatherGlanceView or Null;
 
     function initialize() {
         AppBase.initialize();
@@ -17,19 +17,9 @@ class SimplyWeatherApp extends Application.AppBase {
     // onStop() is called when your application is exiting
 (:typecheck(disableGlanceCheck))
     function onStop(state as Dictionary?) as Void {
-		Sensor.enableSensorEvents( null );
-        if (weatherView != null) {
-            weatherView.enablePosition(false);
-        }
+        Sensor.enableSensorEvents(null);
+        Position.enableLocationEvents(Position.LOCATION_DISABLE, null);
     }
-
-    // Return the initial view of your application here
-/*
-    function getInitialView() as Array<Views or InputDelegates>? {
-        weatherView = new SimplyWeatherView();
-        return [ weatherView, new SimplyWeatherDelegate(weatherView) ] as Array<Views or InputDelegates>;
-    }
-*/
 
 (:typecheck(disableGlanceCheck))
     function getInitialView() {
@@ -37,18 +27,17 @@ class SimplyWeatherApp extends Application.AppBase {
         return [ weatherView, new SimplyWeatherDelegate(weatherView) ];
     }
 
-    // New app settings have been received so trigger a UI update
+// New app settings have been received so trigger a UI update
 (:typecheck(disableGlanceCheck))
     function onSettingsChanged() {
-    	if (weatherView != null) {
-			weatherView.getSettings();
-    	    WatchUi.requestUpdate();
-    	}
-    	if (weatherGlanceView != null) {
-			weatherGlanceView.getTitle();
-//    	    weatherGlanceView.requestUpdate();
-    	    WatchUi.requestUpdate();
-    	}
+        if (weatherView != null) {
+            weatherView.getSettings();
+        }
+        if (weatherGlanceView != null) {
+            weatherGlanceView.refreshTitle();
+        }
+
+        WatchUi.requestUpdate();
     }
 
 (:glance)

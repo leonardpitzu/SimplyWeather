@@ -6,7 +6,7 @@
 	<string id="offsetTitle">Gerätedruckkorrektur (hPa)</string>
 	<string id="steadyTitle">Schwellenwert für Drucktrend (hPa)</string>
 	<string id="timeTitle">Zeit für die Trendmessung (Stunden)</string>
-	<string id="tempTitle">Aktuelle Temperatur anzeigen?</string>
+	<string id="tempTitle">Details anzeigen?</string>
 	<string id="hemiTitle">Nördliche oder südliche Hemisphäre?</string>
 	<string id="origTitle">Originale Druckmessmethode verwenden?</string>
 	<string id="pressureError">Außerhalb vernünftiger Grenzen</string>
@@ -20,8 +20,7 @@
 	<string id="Yes">Ja</string>
 	<string id="No">Nein</string>
 	<string id="appDisplayTitle">Titel für die Übersichtsschleife</string>
-	<string id="GPS">Hole GPS</string>
-	<string id="TrendS">gleichbleibend</string>
+	<string id="TrendS">stabil</string>
 	<string id="TrendR">steigend</string>
 	<string id="TrendF">fallend</string>
 </strings>

@@ -1,3 +1,18 @@
 <drawables>
-    <bitmap id="LauncherIcon" filename="launcher_icon.png" />
+    <bitmap id="CompassArrow" filename="compass_arrow.svg" />
+    <bitmap id="Satellite" filename="satellite.svg" />
+    <bitmap id="PrecipitationRain" filename="precipitation_rain.svg" />
+    <bitmap id="PrecipitationSnow" filename="precipitation_snow.svg" />
+    <bitmap id="ClearDay" scope="glance" filename="clear_day.svg" />
+    <bitmap id="ClearNight" scope="glance" filename="clear_night.svg" />
+    <bitmap id="CloudDay" scope="glance" filename="cloudy_day.svg" />
+    <bitmap id="CloudNight" scope="glance" filename="cloudy_night.svg" />
+    <bitmap id="RainDay" scope="glance" filename="rainy_day.svg" />
+    <bitmap id="RainNight" scope="glance" filename="rainy_night.svg" />
+    <bitmap id="SnowDay" scope="glance" filename="snowy_day.svg" />
+    <bitmap id="SnowNight" scope="glance" filename="snowy_night.svg" />
+    <bitmap id="ThunderStorm" scope="glance" filename="thunderstorm.svg" />
+    <bitmap id="SnowStorm" scope="glance" filename="snowstorm.svg" />
+    <bitmap id="Rain" scope="glance" filename="rainy.svg" />
+    <bitmap id="Snow" scope="glance" filename="snowy.svg" />
 </drawables>

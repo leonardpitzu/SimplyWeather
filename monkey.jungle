@@ -1,5 +1,5 @@
 project.manifest = manifest.xml
-#
+
 icon30x30 = "launcher-icons\icon-30x30"
 icon35x35 = "launcher-icons\icon-35x35"
 icon36x36 = "launcher-icons\icon-36x36"
@@ -11,7 +11,7 @@ icon60x60 = "launcher-icons\icon-60x60"
 icon61x61 = "launcher-icons\icon-61x61"
 icon65x65 = "launcher-icons\icon-65x65"
 icon70x70 = "launcher-icons\icon-70x70"
-#
+
 base.resourcePath=$(base.resourcePath)
 approachs7042mm.resourcePath = $(approachs7042mm.resourcePath);$(icon60x60)
 approachs7047mm.resourcePath = $(approachs7047mm.resourcePath);$(icon70x70)
@@ -56,11 +56,6 @@ fenix5s.resourcePath = $(fenix5s.resourcePath);$(icon36x36)
 fenix5splus.resourcePath = $(fenix5splus.resourcePath)
 fenix5x.resourcePath = $(fenix5x.resourcePath)
 fenix5xplus.resourcePath = $(fenix5xplus.resourcePath)
-#fenix6.resourcePath = $(fenix6.resourcePath);$(icon40x40)
-#fenix6pro.resourcePath = $(fenix6pro.resourcePath);$(icon40x40)
-#fenix6s.resourcePath = $(fenix6s.resourcePath);$(icon40x40)
-#fenix6spro.resourcePath = $(fenix6spro.resourcePath);$(icon40x40)
-#fenix6xpro.resourcePath = $(fenix6xpro.resourcePath);$(icon40x40)
 fenix843mm.resourcePath = $(fenix843mm.resourcePath);$(icon60x60)
 fenix847mm.resourcePath = $(fenix847mm.resourcePath);$(icon65x65)
 fenix8solar47mm.resourcePath = $(fenix8solar47mm.resourcePath);$(icon40x40)
@@ -81,7 +76,6 @@ fr255.resourcePath = $(fr255.resourcePath)
 fr255m.resourcePath = $(fr255m.resourcePath)
 fr255s.resourcePath = $(fr255s.resourcePath)
 fr255sm.resourcePath = $(fr255sm.resourcePath)
-fr55.resourcePath = $(fr55.resourcePath);$(icon35x35)
 fr57042mm.resourcePath = $(fr57042mm.resourcePath);$(icon54x54)
 fr57047mm.resourcePath = $(fr57047mm.resourcePath);$(icon65x65)
 fr630.resourcePath = $(fr630.resourcePath)
@@ -126,10 +120,9 @@ vivoactive3mlte.resourcePath = $(vivoactive3mlte.resourcePath);$(icon40x33)
 vivoactive4.resourcePath = $(vivoactive4.resourcePath);$(icon35x35)
 vivoactive4s.resourcePath = $(vivoactive4s.resourcePath);$(icon30x30)
 vivoactive_hr.resourcePath = $(vivoactive_hr.resourcePath);$(icon40x33)
-#
-#
-base.excludeAnnotations =      touch;notouch;round_208;round_218;round_218_old;round_240;round_260;round_280;round_360;round_390;round_416;round_454;semiround;rectangle
-#
+
+base.excludeAnnotations = touch;notouch;round_208;round_218;round_218_old;round_240;round_260;round_280;round_360;round_390;round_416;round_454;semiround;rectangle
+
 rectangle.excludeAnnotations = round_208;round_218;round_218_old;round_240;round_260;round_280;round_360;round_390;round_416;round_454;semiround
 semiround.excludeAnnotations = round_208;round_218;round_218_old;round_240;round_260;round_280;round_360;round_390;round_416;round_454;rectangle
 round-208x208.excludeAnnotations = round_218;round_218_old;round_240;round_260;round_280;round_360;round_390;round_416;round_454;semiround;rectangle
@@ -239,5 +232,3 @@ marqcommander.excludeAnnotations = $(marqcommander.excludeAnnotations);touch
 marqdriver.excludeAnnotations = $(marqdriver.excludeAnnotations);touch
 marqexpedition.excludeAnnotations = $(marqexpedition.excludeAnnotations);touch
 marqgolfer.excludeAnnotations = $(marqgolfer.excludeAnnotations);touch
-
-
