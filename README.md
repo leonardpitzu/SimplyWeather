@@ -6,6 +6,30 @@ This is a software implementation of the [Zambretti Forecaster](https://en.wikip
 
 > **Forked from [simonl-ciq/SimplyWeather](https://github.com/simonl-ciq/SimplyWeather)**. All credit for the original app and the Zambretti algorithm adaptation goes to Simon. This fork adds UI polish, glance view improvements, and a handful of quality-of-life tweaks.
 
+## Supported Devices
+
+- Fenix 6 / 6 Pro
+- Fenix 6S / 6S Pro
+- Fenix 6X Pro
+- Fenix 7 / 7 Pro / 7 Pro (no Wi-Fi)
+- Fenix 7S / 7S Pro
+- Fenix 7X / 7X Pro / 7X Pro (no Wi-Fi)
+- Fenix 8 (43 mm) / Fenix 8 (47 mm)
+- Fenix 8 Solar (47 mm) / Fenix 8 Solar (51 mm)
+- Fenix Chronos
+- Fenix E
+- Forerunner 965
+
+> Requires Connect IQ SDK 2.4.0 or later. Additional devices can be added via `manifest.xml`.
+
+## Permissions
+
+| Permission | Reason |
+|---|---|
+| **Sensor** | Access barometer and magnetometer for pressure readings and compass heading |
+| **SensorHistory** | Read barometric pressure history to calculate pressure trends |
+| **Positioning** | Detect hemisphere (north/south) via GPS for seasonal corrections |
+
 ## Install
 
 Compile yourself, copy to the watch and enjoy!
@@ -60,18 +84,6 @@ All settings are configurable from the Garmin Connect app:
 | **Default hemisphere** | Hemisphere fallback when GPS is not available | Northern |
 | **Original pressure method** | Use the legacy pressure reading method (for older watches) | No |
 | **Glance title** | Custom title displayed in the glance view | Weather |
-
-## Supported Devices
-
-The widget targets Garmin watches with barometer and compass sensors, including:
-
-- Fenix 6 / 6S / 6X Pro
-- Fenix 7 / 7S / 7X / 7 Pro
-- Fenix 8 (43 mm, 47 mm, Solar 47 mm, Solar 51 mm)
-- Fenix E, Fenix Chronos
-- Forerunner 965
-
-See [manifest.xml](manifest.xml) for the full list of supported products.
 
 ## Languages
 
