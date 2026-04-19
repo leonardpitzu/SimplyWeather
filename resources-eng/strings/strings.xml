@@ -1,20 +1,15 @@
 <strings>
     <string id="AppName" scope="glance">Simply Weather</string>
-	<string id="adjustedPressureTitle">Adjust Pressure to Mean Sea Level?</string>
-	<string id="lowPressureTitle">Local pressure range low (hPa)</string>
-	<string id="highPressureTitle">Local pressure range high (hPa)</string>
 	<string id="offsetTitle">Device pressure correction (hPa)</string>
 	<string id="steadyTitle">Threshold for pressure trend (hPa)</string>
 	<string id="timeTitle">Time for measuring trend (hours)</string>
 	<string id="tempTitle">Display details?</string>
 	<string id="hemiTitle">Northern or Southern hemisphere?</string>
-	<string id="origTitle">Use original pressure reading method?</string>
 	<string id="pressureError">Outside sensible limits</string>
 	<string id="offsetPrompt">This will be added to the device barometer reading. It can be negative</string>
 	<string id="steadyPrompt">Changes less than this will be treated as steady (no change)</string>
 	<string id="timePrompt">Pressure readings from now and this number of hours ago will be used</string>
 	<string id="hemiPrompt">Default choice for earth hemisphere when no GPS</string>
-	<string id="origPrompt">The original method did not work correctly on some watches</string>
 	<string id="Northern">Northern</string>
 	<string id="Southern">Southern</string>
 	<string id="Yes">Yes</string>

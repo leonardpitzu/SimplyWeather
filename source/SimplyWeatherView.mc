@@ -12,15 +12,12 @@ import Toybox.Math;
 import Toybox.System;
 import Toybox.Activity;
 
-import Zambretti;
+import Sager;
 
-const cLowPressure = 950;
-const cHighPressure = 1050;
 const cOffset = 0;
 const cTime = 0.0 - ((Gregorian.SECONDS_PER_HOUR * 3) + (Gregorian.SECONDS_PER_MINUTE * 10));
 const cSteady = 5.0; // equivalent to 0.5 hPa
 const cShowDetails = true;
-const cUseMSLPressure = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
 const DIR_CONFIRM_SAMPLES = 4;
 const HEADING_SMOOTH_FACTOR = 0.15;
@@ -30,11 +27,7 @@ const CALENDAR_REFRESH_INTERVAL_MS = 60000;
 const PRESSURE_REFRESH_INTERVAL_MS = 15000;
 
 class SimplyWeatherView extends WatchUi.View {
-    var mUseMSLPressure as Boolean = true;
-    var mLowPressure as Number = cLowPressure;
-    var mHighPressure as Number = cHighPressure;
     var mOffset as Number = cOffset;
-    var mUseOriginal as Boolean = false;
     var mTime as Float = cTime;
     var mSteadyLimit as Float = cSteady;
     var mNorthSouth as Number = 1; // Northern hemisphere
@@ -203,47 +196,6 @@ class SimplyWeatherView extends WatchUi.View {
         mNotMetricTemp = deviceSettings.temperatureUnits != System.UNIT_METRIC;
 
         try {
-            temp = Properties.getValue("AdjustedPressure");
-        }
-        catch (ex) {
-            temp = null;
-        }
-           mUseMSLPressure = (temp != null && temp instanceof Number) ? (temp == 0) : cUseMSLPressure;
-        try {
-            temp = Properties.getValue("LowPressure");
-        }
-        catch (ex) {
-            temp = null;
-        }
-        try {
-            if (!(temp instanceof Number)) {
-                temp = cLowPressure;
-            }
-            if (temp >= 850 && temp <= 1100) {
-                mLowPressure = temp;
-            }
-        }
-        catch (ex) {
-            mLowPressure = cLowPressure;
-        }
-        try {
-            temp = Properties.getValue("HighPressure");
-            if (!(temp instanceof Number)) {
-                temp = cHighPressure;
-            }
-            if (temp >= 850 && temp <= 1100) {
-                mHighPressure = temp;
-            }
-        }
-        catch (ex) {
-            mHighPressure = cHighPressure;
-        }
-        if (mHighPressure < mLowPressure) {
-            temp = mHighPressure;
-            mHighPressure = mLowPressure;
-            mLowPressure = temp;
-        }
-        try {
             temp = Properties.getValue("Offset");
         }
         catch (ex) {
@@ -287,14 +239,6 @@ class SimplyWeatherView extends WatchUi.View {
 
         mShowDetails = (temp instanceof Number) ? (temp == 0) : cShowDetails;
 
-        try {
-            temp = Properties.getValue("UseOriginal");
-        }
-        catch (ex) {
-            temp = 1;
-        }
-        mUseOriginal = (temp instanceof Number) ? (temp == 0) : false;
-
         // Default is 1 North, 0 South
         try {
             temp = Properties.getValue("DefaultHemisphere");
@@ -302,7 +246,7 @@ class SimplyWeatherView extends WatchUi.View {
         catch (ex) {
             temp = 1;
         }
-           temp = ((temp instanceof Number) ? temp : 1); // Northern if not chosen correctly
+        temp = ((temp instanceof Number) ? temp : 1);
         mDefHemi = temp>0 ? 1 : 0;
         mNorthSouth = mDefHemi;
 
@@ -527,24 +471,15 @@ class SimplyWeatherView extends WatchUi.View {
             trend = 2;
         }
 
+        // Use MSL pressure from sensor history (altitude-safe for Sager).
         var current = 0.0;
-        var activityInfo = Activity.getActivityInfo();
-
-        if (mUseMSLPressure) {
-            if (mUseOriginal) {
-                if (activityInfo != null && activityInfo has :meanSeaLevelPressure && activityInfo.meanSeaLevelPressure != null) {
-                    current = activityInfo.meanSeaLevelPressure;
-                }
-            } else if (final >= 0) {
-                for (var n = 0; n <= final; n++) {
-                    if ((samples[n] as SensorHistory.SensorSample).data != null) {
-                        current = (samples[n] as SensorHistory.SensorSample).data;
-                        break;
-                    }
+        if (final >= 0) {
+            for (var n = 0; n <= final; n++) {
+                if ((samples[n] as SensorHistory.SensorSample).data != null) {
+                    current = (samples[n] as SensorHistory.SensorSample).data;
+                    break;
                 }
             }
-        } else if (activityInfo != null && activityInfo has :ambientPressure && activityInfo.ambientPressure != null) {
-            current = activityInfo.ambientPressure;
         }
 
         currentPress = mOffset + Math.round((current as Float) / 100.0).toNumber();
@@ -559,22 +494,9 @@ class SimplyWeatherView extends WatchUi.View {
 
         mTemperatureText = getTemperature();
 
-        var summer = (mNorthSouth == 1)
-                                        ? (month >= 5 && month <= 9)
-                                        : (month >= 11 || month <= 3);
-
-        mLastForecast = Zambretti.WeatherForecast(currentPress, month, mDir, trend, mNorthSouth, mHighPressure, mLowPressure);
+        mLastForecast = Sager.WeatherForecast(currentPress, month, mDir, trend, mNorthSouth);
 
         var forecast = mLastForecast as Array;
-        if (forecast[0] == Rez.Strings.SH as String && currentPress > 1018) {
-            forecast[0] = Rez.Strings.FF as String;
-            forecast[1] = "High pressure, stable trend — promoted to Fine";
-            mLastForecast = forecast;
-        } else if (forecast[0] == Rez.Strings.SH as String && summer && currentPress > 1015 && trend == 0) {
-            forecast[0] = Rez.Strings.FW as String;
-            forecast[1] = "Summer & stable pressure — adjusted to Fair";
-            mLastForecast = forecast;
-        }
 
         mLastDir = mDir;
         mLastHemisphere = mNorthSouth;
@@ -1133,11 +1055,11 @@ class SimplyWeatherGlanceView extends WatchUi.GlanceView {
     function getWeatherIcon(forecastNumber as Number, isDaytime as Boolean, winter as Boolean) {
         if (forecastNumber <= 1) {
             return isDaytime ? mIconClearDay : mIconClearNight;
-        } else if (forecastNumber <= 3) {
+        } else if (forecastNumber <= 6) {
             return isDaytime ? mIconCloudDay : mIconCloudNight;
-        } else if (forecastNumber <= 13) {
+        } else if (forecastNumber <= 14) {
             return winter ? (isDaytime ? mIconSnowDay : mIconSnowNight) : (isDaytime ? mIconRainDay : mIconRainNight);
-        } else if (forecastNumber <= 23) {
+        } else if (forecastNumber <= 21) {
             return winter ? mIconSnow : mIconRain;
         }
 

@@ -1,20 +1,15 @@
 <strings>
     <string id="AppName" scope="glance">Simply Weather</string>
-	<string id="adjustedPressureTitle">Druck an den mittleren Meeresspiegel anpassen?</string>
-	<string id="lowPressureTitle">Lokaler Druckbereich niedrig (hPa)</string>
-	<string id="highPressureTitle">Lokaler Druckbereich hoch (hPa)</string>
 	<string id="offsetTitle">Gerätedruckkorrektur (hPa)</string>
 	<string id="steadyTitle">Schwellenwert für Drucktrend (hPa)</string>
 	<string id="timeTitle">Zeit für die Trendmessung (Stunden)</string>
 	<string id="tempTitle">Details anzeigen?</string>
 	<string id="hemiTitle">Nördliche oder südliche Hemisphäre?</string>
-	<string id="origTitle">Originale Druckmessmethode verwenden?</string>
 	<string id="pressureError">Außerhalb vernünftiger Grenzen</string>
 	<string id="offsetPrompt">Dies wird zum Barometerwert des Geräts addiert. Es kann negativ sein</string>
 	<string id="steadyPrompt">Geringere Änderungen werden als stetig (keine Änderung) behandelt</string>
 	<string id="timePrompt">Es werden die Druckwerte von jetzt und vor dieser Anzahl von Stunden verwendet</string>
 	<string id="hemiPrompt">Standardauswahl für die Hemisphäre, wenn kein GPS vorhanden ist</string>
-	<string id="origPrompt">Die Originalmethode funktioniert nicht auf allen Uhren</string>
 	<string id="Northern">Nördlich</string>
 	<string id="Southern">Südlich</string>
 	<string id="Yes">Ja</string>
