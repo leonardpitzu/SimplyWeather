@@ -139,6 +139,47 @@ Configurable from the Garmin Connect app:
 
 Build with the Garmin Connect IQ SDK and side-load the `.prg` file to your watch.
 
+### Side-load (manual)
+
+1. Clone or download this repository.
+2. Open the project in Visual Studio Code with the [Monkey C extension](https://marketplace.visualstudio.com/items?itemName=garmin.monkey-c).
+3. Build for your device (`Monkey C: Build for Device`).
+4. Copy the generated `.prg` file to your watch's `GARMIN/APPS` directory.
+
+## Development
+
+### Prerequisites
+
+- [Connect IQ SDK](https://developer.garmin.com/connect-iq/sdk/) 2.4.0+
+- Visual Studio Code with the Monkey C extension
+
+### Build
+
+```sh
+# Build via the VS Code command palette:
+#   Monkey C: Build for Device
+# or use the Connect IQ CLI:
+monkeyc -f monkey.jungle -o SimplyWeather.prg -d fenix7
+```
+
+### Project Structure
+
+```
+source/
+  SimplyWeatherApp.mc        # Application entry point
+  SimplyWeatherDelegate.mc   # Input handling & compass interaction
+  SimplyWeatherForecast.mc   # Sager Weathercaster forecast engine
+  SimplyWeatherView.mc       # Widget layout, rendering & pressure logic
+resources/
+  drawables/                 # SVG icons (weather, compass, etc.)
+  strings/                   # App name
+  forecast-strings/          # Forecast condition descriptions (26 outcomes)
+  point-strings/             # Compass point labels (N, NE, E, …)
+  settings/                  # Garmin Connect configurable properties
+resources-deu/               # German localisation
+resources-eng/               # English localisation
+```
+
 ## Credits
 
 - **Original app**: [Simon (simonl-ciq)](https://github.com/simonl-ciq/SimplyWeather) — the foundation this fork builds on
