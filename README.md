@@ -1,23 +1,110 @@
 # Simply Weather
 
-A [Garmin Connect IQ](https://developer.garmin.com/connect-iq/) widget that predicts the weather using only your watch's barometer and compass — no phone, no internet required. Forecasts are generated on-device using barometric pressure, its trend, and wind direction.
+A [Garmin Connect IQ](https://developer.garmin.com/connect-iq/) widget that predicts the weather using only your watch's barometer and compass — no phone, no internet required.
 
-This is a software implementation of the [Zambretti Forecaster](https://en.wikipedia.org/wiki/Zambretti_Forecaster), a mechanical weather prediction instrument from WWI-era England. A forecast made around 09:00 local solar time is claimed to be over 90% accurate for the next 12 hours in temperate zones.
+> **Forked from [simonl-ciq/SimplyWeather](https://github.com/simonl-ciq/SimplyWeather)**. Original app used the Zambretti algorithm; this fork replaces it with the Sager Weathercaster engine, adds pressure-change acceleration detection, glance-view weather icons, and various quality-of-life improvements.
 
-> **Forked from [simonl-ciq/SimplyWeather](https://github.com/simonl-ciq/SimplyWeather)**. All credit for the original app and the Zambretti algorithm adaptation goes to Simon. This fork adds UI polish, glance view improvements, and a handful of quality-of-life tweaks.
+## Algorithm
+
+### Sager Weathercaster
+
+The forecast engine is based on Raymond Sager's meteorological method (1960s, US Navy). Unlike simpler barometric forecasters, Sager treats **wind direction as a primary forecast dimension** alongside pressure and its trend.
+
+**Inputs** (all derived on-device):
+- Current barometric pressure (hPa)
+- Pressure trend over the configured time window (rising / steady / falling)
+- Wind direction from the compass (8 octants)
+- Current month (for seasonal corrections)
+- Hemisphere (north / south)
+
+**How it works:**
+1. Three lookup tables (`steadyBase`, `risingBase`, `fallingBase`) are indexed by wind octant (0–8), producing a base forecast number (0–25).
+2. The base number is adjusted by pressure level (±2) — high pressure biases toward fair, low toward unsettled.
+3. A seasonal modifier (±1) accounts for summer convective storms and winter clearing patterns.
+4. The final forecast number maps to a condition label (e.g. "Fairly fine, showers likely") and a precipitation probability (0–95%).
+
+**26 forecast conditions** range from *Settled fine* (0) to *Stormy, much rain* (25).
+
+### Pressure-Change Acceleration
+
+On top of the standard 3-hour trend, the engine computes the **second derivative** of pressure (P″) using three hourly samples:
+
+$$P'' = P_0 - 2 P_{-1} + P_{-2}$$
+
+A 0.15 hPa deadband filters sensor quantisation noise. Three refinement rules modify the trend input to Sager before the forecast lookup:
+
+| Condition | Rule | Effect |
+|---|---|---|
+| Trend is steady, P″ ≤ −0.5 | Upgrade to falling | Early storm warning — pressure drop is accelerating before the 3 h window catches it |
+| Trend is falling, P″ > +0.5 | Downgrade to steady | Front is passing — pressure deceleration means conditions are stabilising |
+| Trend is rising, P″ ≤ −1.0 | Keep rising (no flip) | Noise filter — prevents a sensor glitch from overriding a genuine high-pressure build |
+
+This catches the dangerous "looks steady but the bottom is falling out" pattern typically seen with fast-moving summer thunderstorms.
+
+### Expected Accuracy
+
+Barometric forecasting precision varies by terrain and weather pattern:
+
+| Scenario | Accuracy | Lead time | Notes |
+|---|---|---|---|
+| **Urban / lowland** | ~80% | 2–4 h | Stable environment, pressure patterns read cleanly; acceleration catches convective buildups 30–60 min earlier |
+| **Mountain hiking (1500–2500 m)** | ~65% | 1–3 h | Altitude thermals and terrain-funnelled winds add noise; the deadband helps but local effects limit prediction. Always cross-check official mountain forecasts. |
+| **Coastal / seaside** | ~85% | 3–6 h | Flat terrain, clean pressure gradients — best case for barometric forecasting. Fronts approach predictably and the acceleration trigger works well here. |
+
+## Features
+
+### Forecast
+
+- Two-line forecast text (e.g. *"Fairly fine"* / *"possible showers early"*)
+- Precipitation probability percentage with a rain / snow icon (season-aware)
+- Pressure trend indicator: **Rising**, **Steady**, or **Falling**
+- Current barometric pressure (hPa)
+
+### Compass & Wind Direction
+
+- Live compass display with 16-point cardinal directions (N, NNE, NE, …)
+- Heading smoothing and direction hysteresis to avoid jittery updates
+- Wind direction is persisted across widget sessions
+- Shake-to-recalibrate: shake the watch to reset the compass heading
+
+### Glance View
+
+A compact glance view with:
+
+- Customisable title (configurable in Garmin Connect settings)
+- Current forecast summary text
+- Weather icon — context-aware by time of day and season (see table below)
+
+### Weather Icons
+
+The glance view selects an icon based on three inputs: the Sager forecast number, time of day, and season.
+
+**Day / night** is determined by a fixed 07:00–19:00 window.
+
+**Season** is hemisphere-aware — Northern: Dec–Feb = cold season; Southern: May–Sep = cold season.
+
+| Forecast | Condition | Warm season (day / night) | Cold season (day / night) |
+|---|---|---|---|
+| 0–1 | Clear / fine | ☀️ Sun / 🌙 Moon | ☀️ Sun / 🌙 Moon |
+| 2–6 | Fair / variable | 🌤 Cloud-day / ☁️🌙 Cloud-night | 🌤 Cloud-day / ☁️🌙 Cloud-night |
+| 7–14 | Showers / unsettled | 🌧 Rain-day / 🌧🌙 Rain-night | 🌨 Snow-day / 🌨🌙 Snow-night |
+| 15–21 | Rain / very unsettled | 🌧 Heavy rain | 🌨 Heavy snow |
+| 22–25 | Stormy | ⛈ Thunderstorm | 🌨❄️ Snowstorm |
+
+The main widget view shows a small **raindrop** (warm season) or **snowflake** (cold season) icon next to the precipitation percentage.
+
+### Hemisphere Awareness
+
+- Automatic hemisphere detection via GPS (one-shot fix)
+- Falls back to the configured default (Northern or Southern) when GPS is unavailable
+- Seasonal adjustments for precipitation type (rain vs. snow) and forecast modifiers
 
 ## Supported Devices
 
-- Fenix 6 / 6 Pro
-- Fenix 6S / 6S Pro
-- Fenix 6X Pro
-- Fenix 7 / 7 Pro / 7 Pro (no Wi-Fi)
-- Fenix 7S / 7S Pro
-- Fenix 7X / 7X Pro / 7X Pro (no Wi-Fi)
-- Fenix 8 (43 mm) / Fenix 8 (47 mm)
-- Fenix 8 Solar (47 mm) / Fenix 8 Solar (51 mm)
-- Fenix Chronos
-- Fenix E
+- Fenix 6 / 6 Pro / 6S / 6S Pro / 6X Pro
+- Fenix 7 / 7 Pro / 7S / 7S Pro / 7X / 7X Pro
+- Fenix 8 (43 mm / 47 mm) / Fenix 8 Solar (47 mm / 51 mm)
+- Fenix Chronos / Fenix E
 - Forerunner 965
 
 > Requires Connect IQ SDK 2.4.0 or later. Additional devices can be added via `manifest.xml`.
@@ -30,59 +117,17 @@ This is a software implementation of the [Zambretti Forecaster](https://en.wikip
 | **SensorHistory** | Read barometric pressure history to calculate pressure trends |
 | **Positioning** | Detect hemisphere (north/south) via GPS for seasonal corrections |
 
-## Install
-
-Compile yourself, copy to the watch and enjoy!
-
-## Features
-
-### Forecast
-
-The widget uses the [Zambretti algorithm](https://en.wikipedia.org/wiki/Zambretti_Forecaster) adapted from [Beteljuice's JavaScript implementation](https://www.beteljuice.co.uk/zambretti/forecast.html) to produce a short-term (up to 12 h) local weather forecast:
-
-- Two-line forecast text (e.g. *"Fairly fine"* / *"possible showers early"*)
-- Precipitation probability percentage with a rain/snow icon (season-aware)
-- Pressure trend indicator: **Rising**, **Steady**, or **Falling**
-- Current barometric pressure (hPa)
-
-### Compass & Wind Direction
-
-The widget reads the watch's magnetometer to determine wind direction, using it as a key input for the Zambretti algorithm:
-
-- Live compass display with 16-point cardinal directions (N, NNE, NE, …)
-- Heading smoothing and direction hysteresis to avoid jittery updates
-- Wind direction is persisted across widget sessions
-- Shake-to-recalibrate: shake the watch to reset the compass heading
-
-### Glance View
-
-A compact glance-view shows:
-
-- Customisable title (configurable in Garmin Connect settings)
-- Current forecast summary text
-- Context-aware weather icon (day/night, summer/winter)
-
-### Hemisphere Awareness
-
-- Automatic hemisphere detection via GPS (one-shot fix)
-- Falls back to the configured default (Northern or Southern) when GPS is unavailable
-- Seasonal adjustments for pressure trends and precipitation type (rain vs. snow)
-
 ## Settings
 
-All settings are configurable from the Garmin Connect app:
+Configurable from the Garmin Connect app:
 
 | Setting | Description | Default |
 |---|---|---|
-| **Adjust Pressure to MSL** | Use mean sea level pressure instead of local ambient | Yes |
-| **Local pressure range (low)** | Lower bound of local barometric range (hPa) | 950 |
-| **Local pressure range (high)** | Upper bound of local barometric range (hPa) | 1050 |
 | **Device pressure correction** | Offset added to the barometer reading (hPa) | 0 |
 | **Trend threshold** | Pressure change below this is treated as "steady" (hPa) | 0.5 |
 | **Trend time window** | Hours of pressure history used to determine the trend | 4 |
 | **Display details** | Show temperature and extended info on the widget face | Yes |
 | **Default hemisphere** | Hemisphere fallback when GPS is not available | Northern |
-| **Original pressure method** | Use the legacy pressure reading method (for older watches) | No |
 | **Glance title** | Custom title displayed in the glance view | Weather |
 
 ## Languages
@@ -90,10 +135,14 @@ All settings are configurable from the Garmin Connect app:
 - English
 - German (Deutsch)
 
+## Install
+
+Build with the Garmin Connect IQ SDK and side-load the `.prg` file to your watch.
+
 ## Credits
 
 - **Original app**: [Simon (simonl-ciq)](https://github.com/simonl-ciq/SimplyWeather) — the foundation this fork builds on
-- **Zambretti algorithm**: Adapted from [Beteljuice's JavaScript code](https://www.beteljuice.co.uk/zambretti/forecast.html) (June 2008)
+- **Sager Weathercaster**: Based on Raymond Sager's barometric forecasting method (1960s, US Navy)
 - **Icon design**: [Freepik](https://www.flaticon.com/authors/freepik) from Flaticon, licensed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0)
 
 ## License

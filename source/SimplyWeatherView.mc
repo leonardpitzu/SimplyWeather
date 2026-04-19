@@ -21,6 +21,8 @@ const cShowDetails = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
 const DIR_CONFIRM_SAMPLES = 4;
 const HEADING_SMOOTH_FACTOR = 0.15;
+const HEADING_REDRAW_THRESHOLD = 1.0;
+const IDLE_REDRAW_INTERVAL_MS = 1000;
 const CALENDAR_REFRESH_INTERVAL_MS = 60000;
 const PRESSURE_REFRESH_INTERVAL_MS = 15000;
 
@@ -73,6 +75,9 @@ class SimplyWeatherView extends WatchUi.View {
     var mLastCalendarRefreshMs as Number = -1;
     var mLastPressureRefreshMs as Number = -1;
     var mForceNextUpdate as Boolean = true;
+    var mLastRequestedHeading as Float = 0.0;
+    var mHasRequestedHeading as Boolean = false;
+    var mLastIdleRedrawMs as Number = 0;
 
     var mLastForecast = null;
     var mLastDir = null;
@@ -286,6 +291,15 @@ class SimplyWeatherView extends WatchUi.View {
         }
     }
 
+    function wrapDelta(delta as Float) as Float {
+        if (delta > 180.0) {
+            delta -= 360.0;
+        } else if (delta < -180.0) {
+            delta += 360.0;
+        }
+        return delta;
+    }
+
     function smoothHeading(heading as Float) as Float {
         if (!mHasHeading) {
             mLastHeading = heading;
@@ -293,15 +307,14 @@ class SimplyWeatherView extends WatchUi.View {
             return mLastHeading;
         }
 
-        var delta = heading - mLastHeading;
-        if (delta > 180.0) {
-            delta -= 360.0;
-        } else if (delta < -180.0) {
-            delta += 360.0;
-        }
-
-        mLastHeading += delta * HEADING_SMOOTH_FACTOR;
+        mLastHeading += wrapDelta(heading - mLastHeading) * HEADING_SMOOTH_FACTOR;
         return mLastHeading;
+    }
+
+    function headingDeltaAbs(a as Float, b as Float) as Float {
+        var delta = wrapDelta(a - b);
+        if (delta < 0.0) { delta = -delta; }
+        return delta;
     }
 
     function headingToDirection(heading as Float) as Number {
@@ -442,6 +455,51 @@ class SimplyWeatherView extends WatchUi.View {
             trend = 2;
         }
 
+        // Acceleration-aware trend refinement:
+        // Find hourly pressure points (now, -1h, -2h) and compute the
+        // second derivative P'' = P0 - 2*P1 + P2.  A negative P'' means
+        // the drop is accelerating — upgrade steady→falling early.
+        // A positive P'' during a drop means the front is decelerating.
+        if (final >= 4) {
+            var p0h = ((samples[0] as SensorHistory.SensorSample).data as Float) / 100.0;
+            var t0 = (samples[0] as SensorHistory.SensorSample).when.value();
+            var p1h = null as Float or Null;
+            var p2h = null as Float or Null;
+            var best1 = 1800;
+            var best2 = 1800;
+
+            for (var h = 1; h <= final; h++) {
+                var sd = (samples[h] as SensorHistory.SensorSample).data;
+                if (sd == null) { continue; }
+                var age = t0 - (samples[h] as SensorHistory.SensorSample).when.value();
+
+                var d1 = age - 3600;
+                if (d1 < 0) { d1 = -d1; }
+                if (d1 < best1) { best1 = d1; p1h = (sd as Float) / 100.0; }
+
+                var d2 = age - 7200;
+                if (d2 < 0) { d2 = -d2; }
+                if (d2 < best2) { best2 = d2; p2h = (sd as Float) / 100.0; }
+            }
+
+            if (p1h != null && p2h != null) {
+                var accel = p0h - 2.0 * (p1h as Float) + (p2h as Float);
+                // Deadband: ignore sensor quantization noise
+                if (accel > -0.15 && accel < 0.15) { accel = 0.0; }
+
+                if (trend == 0 && accel <= -0.5) {
+                    // Steady macro but pressure dropping faster each hour
+                    trend = 2;
+                } else if (trend == 2 && accel > 0.5) {
+                    // Falling macro but deceleration → front is passing
+                    trend = 0;
+                } else if (trend == 1 && accel <= -1.0) {
+                    // Rising macro + sudden plunge = sensor noise, keep rising
+                    trend = 1;
+                }
+            }
+        }
+
         // Use MSL pressure from sensor history (altitude-safe for Sager).
         var current = 0.0;
         if (final >= 0) {
@@ -478,27 +536,31 @@ class SimplyWeatherView extends WatchUi.View {
         mLastForecastWidth = -1;
     }
     
-    function onAccel(sensorData as Sensor.SensorData) as Void {
-        var x = sensorData.accelerometerData.x[0] / 1000.0;
-        var y = sensorData.accelerometerData.y[0] / 1000.0;
-        var z = sensorData.accelerometerData.z[0] / 1000.0;
+    function onSensor(sensorInfo as Sensor.Info) as Void {
+        // Shake detection from processed accelerometer data
+        if (sensorInfo has :accel && sensorInfo.accel != null) {
+            var accelData = sensorInfo.accel as Array<Numeric>;
+            var x = accelData[0] / 1000.0;
+            var y = accelData[1] / 1000.0;
+            var z = accelData[2] / 1000.0;
 
-        var accelMagnitude = Math.sqrt(x * x + y * y + z * z);
-        var delta = accelMagnitude - 1.0;
-        if (delta < 0) { delta = -delta; }
+            var accelMagnitude = Math.sqrt(x * x + y * y + z * z);
+            var delta = accelMagnitude - 1.0;
+            if (delta < 0) { delta = -delta; }
 
-        if (delta > SHAKE_THRESHOLD) {
-            if (System.getTimer() - lastShakeTime > SHAKE_TIMEOUT) {
-                lastShakeTime = System.getTimer();
-                mWindCalm = !mWindCalm;
-                Storage.setValue("windCalm", mWindCalm);
-                if (mWindCalm) {
-                    mDir = 0;
-                    mPendingDir = 0;
-                    mPendingDirSamples = 0;
-                    persistWindDirection(mDir);
+            if (delta > SHAKE_THRESHOLD) {
+                if (System.getTimer() - lastShakeTime > SHAKE_TIMEOUT) {
+                    lastShakeTime = System.getTimer();
+                    mWindCalm = !mWindCalm;
+                    Storage.setValue("windCalm", mWindCalm);
+                    if (mWindCalm) {
+                        mDir = 0;
+                        mPendingDir = 0;
+                        mPendingDirSamples = 0;
+                        persistWindDirection(mDir);
+                    }
+                    mForceNextUpdate = true;
                 }
-                mForceNextUpdate = true;
             }
         }
     }
@@ -611,11 +673,7 @@ class SimplyWeatherView extends WatchUi.View {
             timer = null;
         }
 
-        if (Sensor has :unregisterSensorDataListener) {
-            Sensor.unregisterSensorDataListener();
-        } else {
-            Sensor.enableSensorEvents(null);
-        }
+        Sensor.enableSensorEvents(null);
 
         Position.enableLocationEvents(Position.LOCATION_DISABLE, null);
     }
@@ -655,17 +713,11 @@ class SimplyWeatherView extends WatchUi.View {
         mLastHemisphere = null;
         mLastForecast = null;
         mLastPressureRefreshMs = -1;
+        mHasRequestedHeading = false;
         mForceNextUpdate = true;
+        mLastIdleRedrawMs = 0;
 
-        var optionsACCEL = {
-            :period => 1,         // 1 second sample time
-            :accelerometer => {
-                :enabled => true, // Enable the accelerometer
-                :sampleRate => 25 // 25 samples
-            }
-        };
-
-        Sensor.registerSensorDataListener(method(:onAccel), optionsACCEL);
+        Sensor.enableSensorEvents(method(:onSensor));
 
         if (!mHasFetchedGPSThisRun) {
             var optionsGPS = {
@@ -702,15 +754,48 @@ class SimplyWeatherView extends WatchUi.View {
     }
 
     function onTimer() as Void {
+        var blinkChanged = false;
         positioning_blink += 1;
 
         if (positioning_blink == 5) {
             positioning_blink = 0;
             showImage = !showImage;
+            blinkChanged = true;
         }
 
-        mForceNextUpdate = false;
-        WatchUi.requestUpdate();
+        refreshCalendarMonth(false);
+
+        var nowMs = System.getTimer();
+        var shouldUpdate = mForceNextUpdate;
+
+        if (!mWindCalm) {
+            var sensorInfo = Sensor.getInfo();
+            if (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) {
+                var heading = Math.toDegrees(sensorInfo.heading).toFloat();
+                if (!mHasRequestedHeading) {
+                    mHasRequestedHeading = true;
+                    mLastRequestedHeading = heading;
+                    shouldUpdate = true;
+                } else if (headingDeltaAbs(heading, mLastRequestedHeading) >= HEADING_REDRAW_THRESHOLD) {
+                    mLastRequestedHeading = heading;
+                    shouldUpdate = true;
+                }
+            }
+        }
+
+        if (blinkChanged && mAcquiringGPS) {
+            shouldUpdate = true;
+        }
+
+        if (!shouldUpdate && (mLastIdleRedrawMs == 0 || (nowMs - mLastIdleRedrawMs) >= IDLE_REDRAW_INTERVAL_MS)) {
+            shouldUpdate = true;
+        }
+
+        if (shouldUpdate) {
+            mForceNextUpdate = false;
+            mLastIdleRedrawMs = nowMs;
+            WatchUi.requestUpdate();
+        }
     }
 
 // 42mm
@@ -943,11 +1028,7 @@ class SimplyWeatherGlanceView extends WatchUi.GlanceView {
 
     function refreshTitle() as Void {
         var AppTitle = Properties.getValue("AppTitle");
-        if (AppTitle == null ) {
-            mTitleCache = mFallbackTitle;
-        } else {
-            mTitleCache = AppTitle as String;
-        }
+        mTitleCache = (AppTitle != null) ? (AppTitle as String) : mFallbackTitle;
     }
 
     function getTitle() as String {
