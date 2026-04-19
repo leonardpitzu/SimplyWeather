@@ -14,25 +14,4 @@
 	<string id="RT">zeitweise Regen</string>
 	<string id="RA">Regen</string>
 	<string id="ST">stürmisch</string>
-    <string id="MT"> </string>
-	<string id="LS">wird weniger beständig</string>
-	<string id="PS">mögliche Schauer</string>
-	<string id="IM">Besserung</string>
-	<string id="PSE">baldige Schauer möglich</string>
-	<string id="SL">später Schauer</string>
-	<string id="ME">Besserung</string>
-	<string id="SY">Schauer wahrscheinlich</string>
-	<string id="CL">später Aufklarung</string>
-	<string id="PI">voraussichtliche Besserung</string>
-	<string id="BI">Aufheiterungen</string>
-	<string id="LS">wird weniger beständig</string>
-	<string id="SR">etwas Regen</string>
-	<string id="SI">kurze schöne Phasen</string>
-	<string id="RL">später Regen</string>
-	<string id="MO">(größtenteils)</string>
-	<string id="WO">Verschlechterung</string>
-	<string id="VU">sehr unbeständig</string>
-	<string id="FI">in kurzen Abständen</string>
-	<string id="MI">könnte sich verbessern</string>
-	<string id="MR">viel Regen</string>
 </strings>

@@ -16,13 +16,11 @@ import Sager;
 
 const cOffset = 0;
 const cTime = 0.0 - ((Gregorian.SECONDS_PER_HOUR * 3) + (Gregorian.SECONDS_PER_MINUTE * 10));
-const cSteady = 5.0; // equivalent to 0.5 hPa
+const cSteady = 5.0; // Pa dead-zone (~0.05 hPa)
 const cShowDetails = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
 const DIR_CONFIRM_SAMPLES = 4;
 const HEADING_SMOOTH_FACTOR = 0.15;
-const HEADING_REDRAW_THRESHOLD = 1.0;
-const IDLE_REDRAW_INTERVAL_MS = 1000;
 const CALENDAR_REFRESH_INTERVAL_MS = 60000;
 const PRESSURE_REFRESH_INTERVAL_MS = 15000;
 
@@ -38,9 +36,9 @@ class SimplyWeatherView extends WatchUi.View {
     var mDir as Number = 0;
     var mAcquiringGPS as Boolean = true;
 
-    var shakeDetected = false;
-    var SHAKE_THRESHOLD = 1.2; // Tune this value if needed; higher means less sensitive to shakes
-    var SHAKE_TIMEOUT = 3000; // In milliseconds
+    var mWindCalm as Boolean = false;
+    var SHAKE_THRESHOLD = 1.2;
+    var SHAKE_TIMEOUT = 3000; // debounce between shakes
     var lastShakeTime = 0;
 
     var mLastHeading as Float = 0.0;
@@ -75,18 +73,13 @@ class SimplyWeatherView extends WatchUi.View {
     var mLastCalendarRefreshMs as Number = -1;
     var mLastPressureRefreshMs as Number = -1;
     var mForceNextUpdate as Boolean = true;
-    var mLastRequestedHeading as Float = 0.0;
-    var mHasRequestedHeading as Boolean = false;
-    var mLastIdleRedrawMs as Number = 0;
 
     var mLastForecast = null;
     var mLastDir = null;
     var mLastHemisphere = null;
-    var mLastForecastLine1 as String = "";
-    var mLastForecastLine2 as String = "";
+    var mLastForecastLine as String = "";
     var mLastForecastWidth as Number = -1;
-    var mForecastFontTop = Graphics.FONT_LARGE;
-    var mForecastFontBottom = Graphics.FONT_LARGE;
+    var mForecastFont = Graphics.FONT_LARGE;
 
     var mStoredWindIndex = null;
     var mStoredHemisphere = null;
@@ -311,21 +304,6 @@ class SimplyWeatherView extends WatchUi.View {
         return mLastHeading;
     }
 
-    function headingDeltaAbs(a as Float, b as Float) as Float {
-        var delta = a - b;
-        if (delta > 180.0) {
-            delta -= 360.0;
-        } else if (delta < -180.0) {
-            delta += 360.0;
-        }
-
-        if (delta < 0.0) {
-            delta = -delta;
-        }
-
-        return delta;
-    }
-
     function headingToDirection(heading as Float) as Number {
         var normalized = myMod(heading, 360.0).toFloat();
         var bucket = ((normalized + 11.25) / 22.5).toLong();
@@ -359,26 +337,19 @@ class SimplyWeatherView extends WatchUi.View {
         return false;
     }
 
-    function updateForecastFonts(dc as Dc, line1 as String, line2 as String, maxHalfWidth as Number) as Void {
-        if (line1 == mLastForecastLine1 && line2 == mLastForecastLine2 && maxHalfWidth == mLastForecastWidth) {
+    function updateForecastFonts(dc as Dc, line as String, maxHalfWidth as Number) as Void {
+        if (line == mLastForecastLine && maxHalfWidth == mLastForecastWidth) {
             return;
         }
 
-        var fontTop = Graphics.FONT_LARGE;
-        while (fontTop >= Graphics.FONT_XTINY && dc.getTextDimensions(line1, fontTop)[0] / 2 > maxHalfWidth) {
-            fontTop -= 1;
+        var font = Graphics.FONT_LARGE;
+        while (font >= Graphics.FONT_XTINY && dc.getTextDimensions(line, font)[0] / 2 > maxHalfWidth) {
+            font -= 1;
         }
 
-        var fontBottom = fontTop;
-        while (fontBottom >= Graphics.FONT_XTINY && dc.getTextDimensions(line2, fontBottom)[0] / 2 > maxHalfWidth) {
-            fontBottom -= 1;
-        }
+        mForecastFont = font;
 
-        mForecastFontTop = fontTop;
-        mForecastFontBottom = fontBottom;
-
-        mLastForecastLine1 = line1;
-        mLastForecastLine2 = line2;
+        mLastForecastLine = line;
         mLastForecastWidth = maxHalfWidth;
     }
 
@@ -500,11 +471,10 @@ class SimplyWeatherView extends WatchUi.View {
 
         mLastDir = mDir;
         mLastHemisphere = mNorthSouth;
-        persistForecastValues(((forecast as Array)[0] == null) ? "" : (forecast as Array)[0].toString(), (forecast as Array)[2]);
+        persistForecastValues(((forecast as Array)[0] == null) ? "" : (forecast as Array)[0].toString(), (forecast as Array)[1]);
 
         // Force one-time font re-fit when forecast text changes
-        mLastForecastLine1 = "";
-        mLastForecastLine2 = "";
+        mLastForecastLine = "";
         mLastForecastWidth = -1;
     }
     
@@ -520,11 +490,14 @@ class SimplyWeatherView extends WatchUi.View {
         if (delta > SHAKE_THRESHOLD) {
             if (System.getTimer() - lastShakeTime > SHAKE_TIMEOUT) {
                 lastShakeTime = System.getTimer();
-                shakeDetected = true;
-                mDir = 0;
-                mPendingDir = 0;
-                mPendingDirSamples = 0;
-                persistWindDirection(mDir);
+                mWindCalm = !mWindCalm;
+                Storage.setValue("windCalm", mWindCalm);
+                if (mWindCalm) {
+                    mDir = 0;
+                    mPendingDir = 0;
+                    mPendingDirSamples = 0;
+                    persistWindDirection(mDir);
+                }
                 mForceNextUpdate = true;
             }
         }
@@ -589,16 +562,8 @@ class SimplyWeatherView extends WatchUi.View {
         var sensorInfo = Sensor.getInfo();
         var rawHeading = (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) ? Math.toDegrees(sensorInfo.heading).toFloat() : mLastHeading;
         var smoothedHeading = smoothHeading(rawHeading);
-        var now = System.getTimer();
-        
-        // Reset calm state if timeout passed and revert to regular compass direction logic
-        if (shakeDetected && (now - lastShakeTime > SHAKE_TIMEOUT + 5000)) {
-            shakeDetected = false;
-            mPendingDir = 0;
-            mPendingDirSamples = 0;
-        }
 
-        if (!shakeDetected) {
+        if (!mWindCalm) {
             updateDirectionWithHysteresis(smoothedHeading);
         }
 
@@ -617,17 +582,15 @@ class SimplyWeatherView extends WatchUi.View {
             dc.drawText(mCentre, layouts[1], Graphics.FONT_SYSTEM_XTINY, mTemperatureText + " | " + currentPress.toString() + " hPa | " + trendText, Graphics.TEXT_JUSTIFY_CENTER);
         }
 
-        var forecast = (mLastForecast != null) ? (mLastForecast as Array) : ["", "", "0", "0"];
-        var forecastLine1 = (forecast[0] == null) ? "" : forecast[0].toString();
-        var forecastLine2 = (forecast[1] == null) ? "" : forecast[1].toString();
-        var precipChance = (forecast[3] == null) ? "0" : forecast[3].toString();
+        var forecast = (mLastForecast != null) ? (mLastForecast as Array) : ["", "0", "0"];
+        var forecastLine = (forecast[0] == null) ? "" : forecast[0].toString();
+        var precipChance = (forecast[2] == null) ? "0" : forecast[2].toString();
 
         // Forecast Drawing with Adaptive Font
         var sw2 = mCentre - layouts[5];
-        updateForecastFonts(dc, forecastLine1, forecastLine2, sw2);
-        dc.drawText(mCentre, layouts[2], mForecastFontTop, forecastLine1, Graphics.TEXT_JUSTIFY_CENTER);
-        dc.drawText(mCentre, layouts[3], mForecastFontBottom, forecastLine2, Graphics.TEXT_JUSTIFY_CENTER);
-        dc.drawText(mCentre - 15, layouts[4], mForecastFontBottom, precipChance + "%", Graphics.TEXT_JUSTIFY_CENTER);
+        updateForecastFonts(dc, forecastLine, sw2);
+        dc.drawText(mCentre, layouts[2], mForecastFont, forecastLine, Graphics.TEXT_JUSTIFY_CENTER);
+        dc.drawText(mCentre - 15, layouts[4], mForecastFont, precipChance + "%", Graphics.TEXT_JUSTIFY_CENTER);
         
         var winter = (mNorthSouth == 1)
                                         ? (month == 12 || month <= 2)   // Northern hemisphere: Dec–Feb
@@ -669,6 +632,9 @@ class SimplyWeatherView extends WatchUi.View {
             mStoredWindIndex = mDir;
         }
 
+        var storedCalm = Storage.getValue("windCalm");
+        mWindCalm = (storedCalm != null && storedCalm == true);
+
         var hasStoredHemisphere = false;
         var storedHemisphere = Storage.getValue("hemisphere");
         if (storedHemisphere != null && storedHemisphere has :toNumber) {
@@ -689,9 +655,7 @@ class SimplyWeatherView extends WatchUi.View {
         mLastHemisphere = null;
         mLastForecast = null;
         mLastPressureRefreshMs = -1;
-        mHasRequestedHeading = false;
         mForceNextUpdate = true;
-        mLastIdleRedrawMs = 0;
 
         var optionsACCEL = {
             :period => 1,         // 1 second sample time
@@ -738,48 +702,15 @@ class SimplyWeatherView extends WatchUi.View {
     }
 
     function onTimer() as Void {
-        var blinkChanged = false;
         positioning_blink += 1;
 
         if (positioning_blink == 5) {
             positioning_blink = 0;
             showImage = !showImage;
-            blinkChanged = true;
         }
 
-        refreshCalendarMonth(false);
-
-        var nowMs = System.getTimer();
-        var shouldUpdate = mForceNextUpdate;
-
-        if (!shakeDetected) {
-            var sensorInfo = Sensor.getInfo();
-            if (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) {
-                var heading = Math.toDegrees(sensorInfo.heading).toFloat();
-                if (!mHasRequestedHeading) {
-                    mHasRequestedHeading = true;
-                    mLastRequestedHeading = heading;
-                    shouldUpdate = true;
-                } else if (headingDeltaAbs(heading, mLastRequestedHeading) >= HEADING_REDRAW_THRESHOLD) {
-                    mLastRequestedHeading = heading;
-                    shouldUpdate = true;
-                }
-            }
-        }
-
-        if (blinkChanged && mAcquiringGPS) {
-            shouldUpdate = true;
-        }
-
-        if (!shouldUpdate && (mLastIdleRedrawMs == 0 || (nowMs - mLastIdleRedrawMs) >= IDLE_REDRAW_INTERVAL_MS)) {
-            shouldUpdate = true;
-        }
-
-        if (shouldUpdate) {
-            mForceNextUpdate = false;
-            mLastIdleRedrawMs = nowMs;
-            WatchUi.requestUpdate();
-        }
+        mForceNextUpdate = false;
+        WatchUi.requestUpdate();
     }
 
 // 42mm
