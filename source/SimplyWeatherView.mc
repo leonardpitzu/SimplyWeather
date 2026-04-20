@@ -14,9 +14,8 @@ import Toybox.Activity;
 
 import Sager;
 
-const cOffset = 0;
 const cTime = 0.0 - ((Gregorian.SECONDS_PER_HOUR * 3) + (Gregorian.SECONDS_PER_MINUTE * 10));
-const cSteady = 5.0; // Pa dead-zone (~0.05 hPa)
+const cSteady = 50.0; // Pa dead-zone (0.5 hPa)
 const cShowDetails = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
 const DIR_CONFIRM_SAMPLES = 4;
@@ -27,7 +26,6 @@ const CALENDAR_REFRESH_INTERVAL_MS = 60000;
 const PRESSURE_REFRESH_INTERVAL_MS = 15000;
 
 class SimplyWeatherView extends WatchUi.View {
-    var mOffset as Number = cOffset;
     var mTime as Float = cTime;
     var mSteadyLimit as Float = cSteady;
     var mNorthSouth as Number = 1; // Northern hemisphere
@@ -194,22 +192,12 @@ class SimplyWeatherView extends WatchUi.View {
         mNotMetricTemp = deviceSettings.temperatureUnits != System.UNIT_METRIC;
 
         try {
-            temp = Properties.getValue("Offset");
-        }
-        catch (ex) {
-            temp = cOffset;
-        }
-        if (!(temp instanceof Number)) {
-            temp = cOffset;
-        }
-        mOffset = temp;
-        try {
             temp = Properties.getValue("Steady");
         }
         catch (ex) {
             temp = null;
         }
-        mSteadyLimit = (temp == null) ? cSteady : (temp as Numeric).toFloat();
+        mSteadyLimit = (temp == null) ? cSteady : (temp as Numeric).toFloat() * 100.0;
         try {
             temp = Properties.getValue("Time");
         }
@@ -308,6 +296,7 @@ class SimplyWeatherView extends WatchUi.View {
         }
 
         mLastHeading += wrapDelta(heading - mLastHeading) * HEADING_SMOOTH_FACTOR;
+        mLastHeading = myMod(mLastHeading, 360.0).toFloat();
         return mLastHeading;
     }
 
@@ -511,7 +500,7 @@ class SimplyWeatherView extends WatchUi.View {
             }
         }
 
-        currentPress = mOffset + Math.round((current as Float) / 100.0).toNumber();
+        currentPress = getSeaLevelPressure(current as Float);
     }
 
     function refreshForecast(month as Number) as Void {
@@ -644,7 +633,7 @@ class SimplyWeatherView extends WatchUi.View {
             dc.drawText(mCentre, layouts[1], Graphics.FONT_SYSTEM_XTINY, mTemperatureText + " | " + currentPress.toString() + " hPa | " + trendText, Graphics.TEXT_JUSTIFY_CENTER);
         }
 
-        var forecast = (mLastForecast != null) ? (mLastForecast as Array) : ["", "0", "0"];
+        var forecast = (mLastForecast != null) ? (mLastForecast as Array) : ["", 0, 0];
         var forecastLine = (forecast[0] == null) ? "" : forecast[0].toString();
         var precipChance = (forecast[2] == null) ? "0" : forecast[2].toString();
 
@@ -763,8 +752,6 @@ class SimplyWeatherView extends WatchUi.View {
             blinkChanged = true;
         }
 
-        refreshCalendarMonth(false);
-
         var nowMs = System.getTimer();
         var shouldUpdate = mForceNextUpdate;
 
@@ -837,6 +824,34 @@ class SimplyWeatherView extends WatchUi.View {
         return null;
     }
 
+    hidden function getSeaLevelPressure(stationPa as Float) as Number {
+        // Try OS-provided MSL pressure (requires prior GPS fix)
+        var activityInfo = Activity.getActivityInfo();
+        if (activityInfo != null && activityInfo has :meanSeaLevelPressure) {
+            var mslPa = activityInfo.meanSeaLevelPressure;
+            if (mslPa != null) {
+                return Math.round((mslPa as Float) / 100.0).toNumber();
+            }
+        }
+
+        // Fallback: elevation history + barometric formula
+        if ((Toybox has :SensorHistory) && (Toybox.SensorHistory has :getElevationHistory)) {
+            var elevIter = SensorHistory.getElevationHistory({:period => 1, :order => SensorHistory.ORDER_NEWEST_FIRST});
+            if (elevIter != null) {
+                var sample = elevIter.next();
+                if (sample != null && sample.data != null) {
+                    var altitude = (sample.data as Float);
+                    var stationHpa = stationPa / 100.0;
+                    var factor = Math.pow(1.0 - (0.0065 * altitude / 288.15), 5.255);
+                    return Math.round(stationHpa / factor).toNumber();
+                }
+            }
+        }
+
+        // Final fallback: raw station pressure
+        return Math.round(stationPa / 100.0).toNumber();
+    }
+
     function getTemperatureIterator() as SensorHistory.SensorHistoryIterator or Null {
         // Check device for SensorHistory compatibility
         if ((Toybox has :SensorHistory) && (Toybox.SensorHistory has :getTemperatureHistory)) {
@@ -883,8 +898,10 @@ class SimplyWeatherView extends WatchUi.View {
         var elev = (activity != null && activity has :elevation && activity.elevation != null) ? activity.elevation.toFloat() : 300.0;
         bias += elev / 2000.0;
 
-        // Seasonal correction
-        var summer = (mCachedMonth >= 5 && mCachedMonth <= 9);
+        // Seasonal correction (hemisphere-aware)
+        var summer = (mNorthSouth == 1)
+            ? (mCachedMonth >= 5 && mCachedMonth <= 9)
+            : (mCachedMonth >= 11 || mCachedMonth <= 3);
         if (summer && temperature != null && temperature > 30.0) {
             bias += 0.8;
         } else if (!summer && temperature != null && temperature < 26.0) {
