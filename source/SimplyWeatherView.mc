@@ -377,7 +377,7 @@ class SimplyWeatherView extends WatchUi.View {
                 samples.add(firstSample as SensorHistory.SensorSample);
 
                 var now = Time.now();
-                var start = now.add(new Time.Duration(-mTime.toNumber()));
+                var start = now.add(new Time.Duration(mTime.toNumber()));
                 oldest = pressureIter.getOldestSampleTime();
                 if (oldest == null || (start as Time.Moment).greaterThan(oldest as Time.Moment)) {
                     oldest = start;
