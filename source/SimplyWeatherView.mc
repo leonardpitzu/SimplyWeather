@@ -72,6 +72,7 @@ class SimplyWeatherView extends WatchUi.View {
     var mCachedMonth as Number = 1;
     var mLastCalendarRefreshMs as Number = -1;
     var mLastPressureRefreshMs as Number = -1;
+    var mLastTemperatureRefreshMs as Number = -1;
     var mForceNextUpdate as Boolean = true;
     var mLastRequestedHeading as Float = 0.0;
     var mHasRequestedHeading as Boolean = false;
@@ -241,6 +242,7 @@ class SimplyWeatherView extends WatchUi.View {
         mLastHemisphere = null;
         mLastForecast = null;
         mLastPressureRefreshMs = -1;
+        mLastTemperatureRefreshMs = -1;
         mForceNextUpdate = true;
     }
 
@@ -432,9 +434,6 @@ class SimplyWeatherView extends WatchUi.View {
         var pressureDiff = 0.0;
         if (cnt > 0) {
             pressureDiff = (p1 - p2) / cnt;
-            if (pressureDiff < 0 && pressureDiff > -0.05) {
-                pressureDiff = 0.0;
-            }
         }
 
         trend = 0;
@@ -509,8 +508,6 @@ class SimplyWeatherView extends WatchUi.View {
             refreshPressureTrendAndCurrent();
             mLastPressureRefreshMs = nowMs;
         }
-
-        mTemperatureText = getTemperature();
 
         mLastForecast = Sager.WeatherForecast(currentPress, month, mDir, trend, mNorthSouth);
 
@@ -627,6 +624,13 @@ class SimplyWeatherView extends WatchUi.View {
             refreshForecast(month);
         }
 
+        // --- Temperature refresh (decoupled from wind/forecast) ---
+        var nowMs = System.getTimer();
+        if (mLastTemperatureRefreshMs < 0 || (nowMs - mLastTemperatureRefreshMs) >= PRESSURE_REFRESH_INTERVAL_MS) {
+            mTemperatureText = getTemperature(sensorInfo);
+            mLastTemperatureRefreshMs = nowMs;
+        }
+
         // --- Pressure, Temperature and Trend Display ---
         if (mShowDetails) {
             var trendText = tString(trend);
@@ -702,6 +706,7 @@ class SimplyWeatherView extends WatchUi.View {
         mLastHemisphere = null;
         mLastForecast = null;
         mLastPressureRefreshMs = -1;
+        mLastTemperatureRefreshMs = -1;
         mHasRequestedHeading = false;
         mForceNextUpdate = true;
         mLastIdleRedrawMs = 0;
@@ -861,12 +866,11 @@ class SimplyWeatherView extends WatchUi.View {
         return null;
     }
 
-    function getTemperature() as String {
+    function getTemperature(sensorInfo as Sensor.Info or Null) as String {
         var ret = "";
         var temperature = null;
         var bias = 0.0;
 
-        var sensorInfo = Sensor.getInfo();
         var activity = Activity.getActivityInfo();
         var temperatureIter = getTemperatureIterator();
 
