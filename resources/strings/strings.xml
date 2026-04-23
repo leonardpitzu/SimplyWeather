@@ -1,11 +1,11 @@
 <strings>
     <string id="AppName" scope="glance">Simply Weather</string>
-	<string id="steadyTitle">Threshold for pressure trend (hPa)</string>
+	<string id="steadyTitle">Threshold for pressure trend (hPa/h)</string>
 	<string id="timeTitle">Time for measuring trend (hours)</string>
 	<string id="tempTitle">Display details?</string>
 	<string id="hemiTitle">Northern or Southern hemisphere?</string>
 	<string id="pressureError">Outside sensible limits</string>
-	<string id="steadyPrompt">Changes less than this will be treated as steady (no change)</string>
+	<string id="steadyPrompt">Rate of change below this will be treated as steady (no change)</string>
 	<string id="timePrompt">Pressure readings from now and this number of hours ago will be used</string>
 	<string id="hemiPrompt">Default choice for earth hemisphere when no GPS</string>
 	<string id="Northern">Northern</string>

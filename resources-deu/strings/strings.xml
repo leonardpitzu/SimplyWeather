@@ -1,11 +1,11 @@
 <strings>
     <string id="AppName" scope="glance">Simply Weather</string>
-	<string id="steadyTitle">Schwellenwert für Drucktrend (hPa)</string>
+	<string id="steadyTitle">Schwellenwert für Drucktrend (hPa/h)</string>
 	<string id="timeTitle">Zeit für die Trendmessung (Stunden)</string>
 	<string id="tempTitle">Details anzeigen?</string>
 	<string id="hemiTitle">Nördliche oder südliche Hemisphäre?</string>
 	<string id="pressureError">Außerhalb vernünftiger Grenzen</string>
-	<string id="steadyPrompt">Geringere Änderungen werden als stetig (keine Änderung) behandelt</string>
+	<string id="steadyPrompt">Änderungsrate unterhalb dieses Werts wird als stetig (keine Änderung) behandelt</string>
 	<string id="timePrompt">Es werden die Druckwerte von jetzt und vor dieser Anzahl von Stunden verwendet</string>
 	<string id="hemiPrompt">Standardauswahl für die Hemisphäre, wenn kein GPS vorhanden ist</string>
 	<string id="Northern">Nördlich</string>
