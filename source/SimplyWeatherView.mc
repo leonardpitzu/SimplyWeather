@@ -477,10 +477,10 @@ class SimplyWeatherView extends WatchUi.View {
 
             if (p1h != null && p2h != null) {
                 var accel = p0h - 2.0 * (p1h as Float) + (p2h as Float);
-                // Deadband: ignore sensor quantization noise
-                if (accel > -0.15 && accel < 0.15) { accel = 0.0; }
+                // Deadband: ignore sensor noise + diurnal tide artifacts
+                if (accel > -0.3 && accel < 0.3) { accel = 0.0; }
 
-                if (trend == 0 && accel <= -0.5) {
+                if (trend == 0 && accel <= -0.8) {
                     // Steady macro but pressure dropping faster each hour
                     trend = 2;
                 } else if (trend == 2 && accel > 0.5) {
