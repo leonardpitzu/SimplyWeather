@@ -37,7 +37,7 @@ class SimplyWeatherView extends WatchUi.View {
     var mAcquiringGPS as Boolean = true;
 
     var mWindCalm as Boolean = false;
-    var SHAKE_THRESHOLD = 1.2;
+    var SHAKE_THRESHOLD = 0.5;
     var SHAKE_TIMEOUT = 3000; // debounce between shakes
     var lastShakeTime = 0;
 
