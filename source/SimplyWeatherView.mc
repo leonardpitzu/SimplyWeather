@@ -14,7 +14,7 @@ import Toybox.Activity;
 
 import Sager;
 
-const cTime = 0.0 - ((Gregorian.SECONDS_PER_HOUR * 3) + (Gregorian.SECONDS_PER_MINUTE * 10));
+const cTime = 0.0 - ((Gregorian.SECONDS_PER_HOUR * 4) + (Gregorian.SECONDS_PER_MINUTE * 10));
 const cSteady = 100.0; // Pa/h dead-zone (1.0 hPa/h) — above diurnal tide
 const cShowDetails = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
@@ -654,7 +654,7 @@ class SimplyWeatherView extends WatchUi.View {
         
         var winter = (mNorthSouth == 1)
                                         ? (month == 12 || month <= 2)   // Northern hemisphere: Dec–Feb
-                                        : (month >= 5 && month <= 9);   // Southern hemisphere: May–Sep
+                                        : (month >= 6 && month <= 8);   // Southern hemisphere: Jun–Aug
 
         var precipitationBitmap = winter ? PrecipitationSnow : PrecipitationRain;
         dc.drawBitmap(xPrecipitationBitmap, yPrecipitationBitmap, precipitationBitmap);
@@ -872,11 +872,9 @@ class SimplyWeatherView extends WatchUi.View {
     }
 
     function getTemperature(sensorInfo as Sensor.Info or Null) as String {
-        var ret = "";
         var temperature = null;
         var bias = 0.0;
 
-        var activity = Activity.getActivityInfo();
         var temperatureIter = getTemperatureIterator();
 
         if (temperatureIter != null) {
@@ -889,50 +887,25 @@ class SimplyWeatherView extends WatchUi.View {
         var worn = sensorInfo != null && sensorInfo has :onBody && sensorInfo.onBody != null ? sensorInfo.onBody : true;
 
         if (temperature != null && worn) {
-            // If temperature is already high, assume it's ambient
-            if (temperature > 30.0) {
-                bias = 0.0;
-            } else if (activity != null && activity has :activeTime) {
-                var act = activity.activeTime;
-                if (act < 10) { bias = 6.0; }
-                else if (act < 60) { bias = 7.0; }
-                else if (act < 300) { bias = 8.0; }
-                else { bias = 9.0; }
-            } else {
-                bias = 7.0;
-            }
+            // Use heart rate as activity proxy for body-heat bias.
+            // Higher HR → more blood flow → warmer skin → larger offset.
+            var hr = (sensorInfo != null && sensorInfo has :heartRate && sensorInfo.heartRate != null) ? sensorInfo.heartRate : 0;
+            if (hr > 130)      { bias = 9.0; }
+            else if (hr > 100) { bias = 7.5; }
+            else if (hr > 70)  { bias = 6.0; }
+            else if (hr > 0)   { bias = 5.0; }
+            else               { bias = 6.0; }
         }
 
-        // Elevation correction (mild)
-        var elev = (activity != null && activity has :elevation && activity.elevation != null) ? activity.elevation.toFloat() : 300.0;
-        bias += elev / 2000.0;
-
-        // Seasonal correction (hemisphere-aware)
-        var summer = (mNorthSouth == 1)
-            ? (mCachedMonth >= 5 && mCachedMonth <= 9)
-            : (mCachedMonth >= 11 || mCachedMonth <= 3);
-        if (summer && temperature != null && temperature > 30.0) {
-            bias += 0.8;
-        } else if (!summer && temperature != null && temperature < 26.0) {
-            bias -= 0.5;
-        }
-
-        // Trend correction
-        if (trend == 1) { bias -= 0.5; }
-        else if (trend == 2) { bias += 0.5; }
-
-        // Final calculation
         if (temperature != null) {
-            temperature = (temperature - bias).toNumber();
-            var units = "°C";
+            temperature = Math.round(temperature - bias);
             if (mNotMetricTemp) {
-                temperature = (temperature * 9.0 / 5.0) + 32;
-                units = "°F";
+                temperature = Math.round(temperature * 9.0 / 5.0 + 32);
             }
-            ret = temperature.format("%.0f") + units;
+            return temperature.format("%.0f") + (mNotMetricTemp ? "°F" : "°C");
         }
 
-        return ret;
+        return "";
     }
 
     function myMod(a as Numeric, b as Numeric) as Numeric {
@@ -1134,7 +1107,7 @@ class SimplyWeatherGlanceView extends WatchUi.GlanceView {
 
         var winter = (hemisphere == 1)
                                         ? (mCachedMonth == 12 || mCachedMonth <= 2)   // Northern hemisphere: Dec–Feb
-                                        : (mCachedMonth >= 5 && mCachedMonth <= 9);   // Southern hemisphere: May–Sep
+                                        : (mCachedMonth >= 6 && mCachedMonth <= 8);   // Southern hemisphere: Jun–Aug
 
         var weatherIcon = getWeatherIcon(forecastNumber, isDaytime, winter);
 
