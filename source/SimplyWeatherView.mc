@@ -14,8 +14,8 @@ import Toybox.Activity;
 
 import Sager;
 
-const cTime = 0.0 - ((Gregorian.SECONDS_PER_HOUR * 4) + (Gregorian.SECONDS_PER_MINUTE * 10));
-const cSteady = 60.0; // Pa/h dead-zone (0.6 hPa/h) — above diurnal tide
+const cTime = 0.0 - ((Gregorian.SECONDS_PER_HOUR * 6) + (Gregorian.SECONDS_PER_MINUTE * 10));
+const cSteady = 35.0; // Pa/h dead-zone (0.35 hPa/h) — tighter for barometer-only forecast
 const cShowDetails = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
 const DIR_CONFIRM_SAMPLES = 4;
@@ -480,7 +480,7 @@ class SimplyWeatherView extends WatchUi.View {
                 // Deadband: ignore sensor noise + diurnal tide artifacts
                 if (accel > -0.3 && accel < 0.3) { accel = 0.0; }
 
-                if (trend == 0 && accel <= -0.8) {
+                if (trend == 0 && accel <= -0.4) {
                     // Steady macro but pressure dropping faster each hour
                     trend = 2;
                 } else if (trend == 2 && accel > 0.5) {
