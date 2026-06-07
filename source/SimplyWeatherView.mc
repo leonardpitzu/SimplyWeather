@@ -20,7 +20,7 @@ const cShowDetails = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
 const DIR_CONFIRM_SAMPLES = 4;
 const HEADING_SMOOTH_FACTOR = 0.15;
-const HEADING_REDRAW_THRESHOLD = 1.0;
+const HEADING_REDRAW_THRESHOLD = 0.5;
 const IDLE_REDRAW_INTERVAL_MS = 1000;
 const CALENDAR_REFRESH_INTERVAL_MS = 60000;
 const PRESSURE_REFRESH_INTERVAL_MS = 15000;
@@ -75,8 +75,8 @@ class SimplyWeatherView extends WatchUi.View {
     var mLastPressureRefreshMs as Number = -1;
     var mLastTemperatureRefreshMs as Number = -1;
     var mForceNextUpdate as Boolean = true;
-    var mLastRequestedHeading as Float = 0.0;
-    var mHasRequestedHeading as Boolean = false;
+    var mLastDrawnHeading as Float = 0.0;
+    var mHasDrawnHeading as Boolean = false;
     var mLastIdleRedrawMs as Number = 0;
 
     var mLastForecast = null;
@@ -694,15 +694,25 @@ class SimplyWeatherView extends WatchUi.View {
         }
 
         // --- Compass + Heading ---
+        // The smoothing filter is advanced in onTimer; render its current value
+        // here so the needle keeps animating between raw sensor updates.
         var sensorInfo = Sensor.getInfo();
-        var rawHeading = (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) ? Math.toDegrees(sensorInfo.heading).toFloat() : mLastHeading;
-        var smoothedHeading = smoothHeading(rawHeading);
+        var smoothedHeading;
+        if (mHasHeading) {
+            smoothedHeading = mLastHeading;
+        } else if (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) {
+            smoothedHeading = smoothHeading(Math.toDegrees(sensorInfo.heading).toFloat());
+        } else {
+            smoothedHeading = mLastHeading;
+        }
 
         if (!mWindCalm) {
             updateDirectionWithHysteresis(smoothedHeading);
         }
 
         drawCompass(dc, smoothedHeading);
+        mLastDrawnHeading = smoothedHeading;
+        mHasDrawnHeading = true;
 
         dc.drawText(mCentre, layouts[0], Graphics.FONT_TINY, pString(mDir), Graphics.TEXT_JUSTIFY_CENTER);
 
@@ -794,7 +804,8 @@ class SimplyWeatherView extends WatchUi.View {
         mLastForecast = null;
         mLastPressureRefreshMs = -1;
         mLastTemperatureRefreshMs = -1;
-        mHasRequestedHeading = false;
+        mHasHeading = false;
+        mHasDrawnHeading = false;
         mForceNextUpdate = true;
         mLastIdleRedrawMs = 0;
 
@@ -850,13 +861,13 @@ class SimplyWeatherView extends WatchUi.View {
         if (!mWindCalm) {
             var sensorInfo = Sensor.getInfo();
             if (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) {
-                var heading = Math.toDegrees(sensorInfo.heading).toFloat();
-                if (!mHasRequestedHeading) {
-                    mHasRequestedHeading = true;
-                    mLastRequestedHeading = heading;
-                    shouldUpdate = true;
-                } else if (headingDeltaAbs(heading, mLastRequestedHeading) >= HEADING_REDRAW_THRESHOLD) {
-                    mLastRequestedHeading = heading;
+                var rawHeading = Math.toDegrees(sensorInfo.heading).toFloat();
+                // Advance the smoothing filter on every tick (10 Hz) so the
+                // needle keeps gliding toward the target even after the raw
+                // heading has settled, then redraw whenever the *smoothed*
+                // value has moved enough to be visible.
+                var smoothed = smoothHeading(rawHeading);
+                if (!mHasDrawnHeading || headingDeltaAbs(smoothed, mLastDrawnHeading) >= HEADING_REDRAW_THRESHOLD) {
                     shouldUpdate = true;
                 }
             }
