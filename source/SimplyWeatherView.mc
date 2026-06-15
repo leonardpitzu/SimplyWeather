@@ -19,7 +19,7 @@ const cSteady = 35.0; // Pa/h dead-zone (0.35 hPa/h) — tighter for barometer-o
 const cShowDetails = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
 const DIR_CONFIRM_SAMPLES = 4;
-const HEADING_SMOOTH_FACTOR = 0.15;
+const HEADING_SMOOTH_FACTOR = 0.25;
 const HEADING_REDRAW_THRESHOLD = 0.5;
 const IDLE_REDRAW_INTERVAL_MS = 1000;
 const CALENDAR_REFRESH_INTERVAL_MS = 60000;
@@ -37,7 +37,7 @@ class SimplyWeatherView extends WatchUi.View {
     var mAcquiringGPS as Boolean = true;
 
     var mWindCalm as Boolean = false;
-    var SHAKE_THRESHOLD = 0.5;
+    var SHAKE_THRESHOLD = 1.0;
     var SHAKE_TIMEOUT = 3000; // debounce between shakes
     var lastShakeTime = 0;
 
@@ -78,6 +78,8 @@ class SimplyWeatherView extends WatchUi.View {
     var mLastDrawnHeading as Float = 0.0;
     var mHasDrawnHeading as Boolean = false;
     var mLastIdleRedrawMs as Number = 0;
+
+    var mCompassTextHeight as Number = -1;
 
     var mLastForecast = null;
     var mLastDir = null;
@@ -674,6 +676,8 @@ class SimplyWeatherView extends WatchUi.View {
             arrowBitmap = WatchUi.loadResource(Rez.Drawables.CompassArrow);
         }
 
+        mCompassTextHeight = dc.getFontHeight(Graphics.FONT_SYSTEM_XTINY);
+
         // Trigger one-time font recalculation after layout changes.
         mLastForecastWidth = -1;
     }
@@ -770,7 +774,7 @@ class SimplyWeatherView extends WatchUi.View {
 
     function onShow() as Void {
         timer = new Timer.Timer();
-        timer.start(method(:onTimer), 100, true);
+        timer.start(method(:onTimer), 33, true);
 
         refreshCalendarMonth(true);
 
@@ -849,7 +853,7 @@ class SimplyWeatherView extends WatchUi.View {
         var blinkChanged = false;
         positioning_blink += 1;
 
-        if (positioning_blink == 5) {
+        if (positioning_blink == 15) {
             positioning_blink = 0;
             showImage = !showImage;
             blinkChanged = true;
@@ -858,18 +862,12 @@ class SimplyWeatherView extends WatchUi.View {
         var nowMs = System.getTimer();
         var shouldUpdate = mForceNextUpdate;
 
-        if (!mWindCalm) {
-            var sensorInfo = Sensor.getInfo();
-            if (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) {
-                var rawHeading = Math.toDegrees(sensorInfo.heading).toFloat();
-                // Advance the smoothing filter on every tick (10 Hz) so the
-                // needle keeps gliding toward the target even after the raw
-                // heading has settled, then redraw whenever the *smoothed*
-                // value has moved enough to be visible.
-                var smoothed = smoothHeading(rawHeading);
-                if (!mHasDrawnHeading || headingDeltaAbs(smoothed, mLastDrawnHeading) >= HEADING_REDRAW_THRESHOLD) {
-                    shouldUpdate = true;
-                }
+        var sensorInfo = Sensor.getInfo();
+        if (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) {
+            var rawHeading = Math.toDegrees(sensorInfo.heading).toFloat();
+            var smoothed = smoothHeading(rawHeading);
+            if (!mHasDrawnHeading || headingDeltaAbs(smoothed, mLastDrawnHeading) >= HEADING_REDRAW_THRESHOLD) {
+                shouldUpdate = true;
             }
         }
 
@@ -1028,7 +1026,7 @@ class SimplyWeatherView extends WatchUi.View {
         var radius = ((w < h) ? centerX : centerY) - layouts[5];
 
         var font = Graphics.FONT_SYSTEM_XTINY;
-        var textHeight = dc.getFontHeight(font);
+        var textHeight = (mCompassTextHeight >= 0) ? mCompassTextHeight : dc.getFontHeight(font);
 
         // Tick radii
         var tickOuter = radius - textHeight + 5;
@@ -1043,24 +1041,28 @@ class SimplyWeatherView extends WatchUi.View {
         var labelSin = mLabelSin as Array<Float>;
         var labelCos = mLabelCos as Array<Float>;
 
-        // Draw 16 tick marks
+        // Minor ticks — single state setup, then batch all 12
+        dc.setPenWidth(1);
+        dc.setColor(0x888888, Graphics.COLOR_TRANSPARENT);
         for (var i = 0; i < 16; i++) {
-            var isMajor = (i % 4 == 0);
-            var innerR = isMajor ? tickInnerMajor : tickInnerMinor;
-
-            var baseTickSin = tickSin[i];
-            var baseTickCos = tickCos[i];
-            var sinA = (baseTickSin * cosH) - (baseTickCos * sinH);
-            var cosA = (baseTickCos * cosH) + (baseTickSin * sinH);
-
-            var x1 = centerX + innerR * sinA;
-            var y1 = centerY - innerR * cosA;
-            var x2 = centerX + tickOuter * sinA;
-            var y2 = centerY - tickOuter * cosA;
-
-            dc.setPenWidth(isMajor ? 2 : 1);
-            dc.setColor(isMajor ? Graphics.COLOR_WHITE : 0x888888, Graphics.COLOR_TRANSPARENT);
-            dc.drawLine(x1, y1, x2, y2);
+            if (i % 4 == 0) { continue; }
+            var sinA = (tickSin[i] * cosH) - (tickCos[i] * sinH);
+            var cosA = (tickCos[i] * cosH) + (tickSin[i] * sinH);
+            dc.drawLine(
+                centerX + tickInnerMinor * sinA, centerY - tickInnerMinor * cosA,
+                centerX + tickOuter * sinA, centerY - tickOuter * cosA
+            );
+        }
+        // Major ticks — single state setup, then batch all 4
+        dc.setPenWidth(2);
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
+        for (var i = 0; i < 16; i += 4) {
+            var sinA = (tickSin[i] * cosH) - (tickCos[i] * sinH);
+            var cosA = (tickCos[i] * cosH) + (tickSin[i] * sinH);
+            dc.drawLine(
+                centerX + tickInnerMajor * sinA, centerY - tickInnerMajor * cosA,
+                centerX + tickOuter * sinA, centerY - tickOuter * cosA
+            );
         }
 
         // Draw 8 cardinal labels
