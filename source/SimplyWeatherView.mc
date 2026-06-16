@@ -19,8 +19,21 @@ const cSteady = 35.0; // Pa/h dead-zone (0.35 hPa/h) — tighter for barometer-o
 const cShowDetails = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
 const DIR_CONFIRM_SAMPLES = 4;
-const HEADING_SMOOTH_FACTOR = 0.25;
-const HEADING_REDRAW_THRESHOLD = 0.5;
+// Compass heading playback: Sensor.getInfo().heading only refreshes at ~1 Hz, so
+// the needle is animated by linearly interpolating between the last two samples on
+// a clock delayed by HEADING_LAG_MS. This reproduces the native "smooth but follows
+// a bit later" feel — constant-velocity glide (no stutter), tracks true wrist speed
+// (no molasses). LAG must be >= the sensor sample interval so the playhead stays
+// within the [prev, curr] segment during continuous motion.
+const HEADING_LAG_MS = 700.0;
+const HEADING_NEW_SAMPLE_EPS = 0.5; // deg; rejects rest jitter and ignores no-op reads
+const HEADING_MAX_GAP_MS = 4000.0;  // deg; stale/huge gap -> snap instead of interpolate
+// Output low-pass applied to the interpolated value. The delay line already emits a
+// continuously-moving 30 Hz signal, so this rounds the per-sample velocity kinks and
+// damps sensor jitter WITHOUT freezing (input moves every frame). alpha per 33 ms
+// tick: ~0.30 -> tau ~= 90 ms of extra, glassy lag. Raise toward 1.0 to disable.
+const HEADING_OUT_ALPHA = 0.45;
+const HEADING_REDRAW_THRESHOLD = 0.50;
 const IDLE_REDRAW_INTERVAL_MS = 1000;
 const CALENDAR_REFRESH_INTERVAL_MS = 60000;
 const PRESSURE_REFRESH_INTERVAL_MS = 15000;
@@ -43,6 +56,13 @@ class SimplyWeatherView extends WatchUi.View {
 
     var mLastHeading as Float = 0.0;
     var mHasHeading as Boolean = false;
+    // Two most recent raw heading keyframes (+ their System.getTimer() timestamps)
+    // for the interpolating delay line. mLastHeading holds the smoothed output that
+    // is rendered; mDispHeading is the low-pass accumulator (same value).
+    var mPrevHeading as Float = 0.0;
+    var mCurrHeading as Float = 0.0;
+    var mPrevKeyMs as Number = 0;
+    var mCurrKeyMs as Number = 0;
     var mPendingDir as Number = 0;
     var mPendingDirSamples as Number = 0;
     hidden var timer;
@@ -293,15 +313,65 @@ class SimplyWeatherView extends WatchUi.View {
         return delta;
     }
 
-    function smoothHeading(heading as Float) as Float {
+    // Record a new raw heading sample as the latest keyframe. Repeated identical
+    // reads (the same 1 Hz sample seen by the 30 Hz timer) and sub-EPS jitter are
+    // ignored so the interpolation segment isn't restarted spuriously.
+    function pushRawHeading(raw as Float, nowMs as Number) as Void {
         if (!mHasHeading) {
-            mLastHeading = heading;
+            mLastHeading = raw;
+            mPrevHeading = raw;
+            mCurrHeading = raw;
+            mPrevKeyMs = nowMs;
+            mCurrKeyMs = nowMs;
             mHasHeading = true;
+            return;
+        }
+
+        var d = wrapDelta(raw - mCurrHeading);
+        if (d < 0.0) { d = -d; }
+        if (d < HEADING_NEW_SAMPLE_EPS) {
+            return;
+        }
+
+        mPrevHeading = mCurrHeading;
+        mPrevKeyMs = mCurrKeyMs;
+        mCurrHeading = raw;
+        mCurrKeyMs = nowMs;
+    }
+
+    // Interpolate the displayed heading from a clock delayed by HEADING_LAG_MS,
+    // sliding linearly across the last keyframe segment, then apply an output
+    // low-pass. Linear interp removes the 1 Hz staircase; the low-pass rounds the
+    // per-sample velocity kinks and damps jitter for a glassy, native-like glide.
+    function advanceHeading(nowMs as Number) as Float {
+        if (!mHasHeading) {
             return mLastHeading;
         }
 
-        mLastHeading += wrapDelta(heading - mLastHeading) * HEADING_SMOOTH_FACTOR;
-        mLastHeading = myMod(mLastHeading, 360.0).toFloat();
+        var target;
+        var snap = false;
+        var span = (mCurrKeyMs - mPrevKeyMs).toFloat();
+        if (span <= 0.0 || span > HEADING_MAX_GAP_MS) {
+            target = mCurrHeading;
+            snap = true;
+        } else {
+            var playMs = nowMs.toFloat() - HEADING_LAG_MS;
+            var t = (playMs - mPrevKeyMs.toFloat()) / span;
+            if (t <= 0.0) {
+                target = mPrevHeading;
+            } else if (t >= 1.0) {
+                target = mCurrHeading;
+            } else {
+                var seg = wrapDelta(mCurrHeading - mPrevHeading);
+                target = myMod(mPrevHeading + seg * t, 360.0).toFloat();
+            }
+        }
+
+        if (snap) {
+            mLastHeading = target;
+        } else {
+            mLastHeading = myMod(mLastHeading + wrapDelta(target - mLastHeading) * HEADING_OUT_ALPHA, 360.0).toFloat();
+        }
         return mLastHeading;
     }
 
@@ -698,14 +768,15 @@ class SimplyWeatherView extends WatchUi.View {
         }
 
         // --- Compass + Heading ---
-        // The smoothing filter is advanced in onTimer; render its current value
-        // here so the needle keeps animating between raw sensor updates.
+        // The interpolating delay line is advanced in onTimer; render its current
+        // output here so the needle keeps gliding between 1 Hz sensor samples.
         var sensorInfo = Sensor.getInfo();
         var smoothedHeading;
         if (mHasHeading) {
-            smoothedHeading = mLastHeading;
+            smoothedHeading = advanceHeading(System.getTimer());
         } else if (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) {
-            smoothedHeading = smoothHeading(Math.toDegrees(sensorInfo.heading).toFloat());
+            pushRawHeading(Math.toDegrees(sensorInfo.heading).toFloat(), System.getTimer());
+            smoothedHeading = mLastHeading;
         } else {
             smoothedHeading = mLastHeading;
         }
@@ -864,8 +935,10 @@ class SimplyWeatherView extends WatchUi.View {
 
         var sensorInfo = Sensor.getInfo();
         if (sensorInfo != null && sensorInfo has :heading && sensorInfo.heading != null) {
-            var rawHeading = Math.toDegrees(sensorInfo.heading).toFloat();
-            var smoothed = smoothHeading(rawHeading);
+            pushRawHeading(Math.toDegrees(sensorInfo.heading).toFloat(), nowMs);
+        }
+        if (mHasHeading) {
+            var smoothed = advanceHeading(nowMs);
             if (!mHasDrawnHeading || headingDeltaAbs(smoothed, mLastDrawnHeading) >= HEADING_REDRAW_THRESHOLD) {
                 shouldUpdate = true;
             }
