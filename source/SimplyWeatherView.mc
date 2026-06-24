@@ -1286,7 +1286,7 @@ class SimplyWeatherGlanceView extends WatchUi.GlanceView {
 
         var weatherIcon = getWeatherIcon(forecastNumber, isDaytime, winter);
 
-        var xWeatherIcon = dc.getWidth() - weatherIcon.getWidth() - 20;
+        var xWeatherIcon = dc.getWidth() - weatherIcon.getWidth() - 10;
         var yWeatherIcon = valueY - 25;
 
         dc.drawBitmap(xWeatherIcon, yWeatherIcon, weatherIcon);
