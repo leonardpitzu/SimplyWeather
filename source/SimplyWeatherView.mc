@@ -485,19 +485,43 @@ class SimplyWeatherView extends WatchUi.View {
         var regSy = 0.0;
         var regSxy = 0.0;
         var regSx2y = 0.0;
+        // Independent short-window (last 3h) linear-fit accumulators for front detection.
+        var short3N = 0;
+        var short3Sx = 0.0;
+        var short3Sy = 0.0;
+        var short3Sxy = 0.0;
+        var short3Sx2 = 0.0;
         var t0 = (final >= 0) ? (samples[0] as SensorHistory.SensorSample).when.value() : 0;
+
+        // Reduce every sample to mean-sea-level before regression so altitude
+        // changes (hike, cable car, bike, elevator) cancel and only genuine
+        // weather drives the trend. Elevation arrays are newest-first, matching
+        // the pressure samples, so a single forward index pairs them in one pass.
+        var elevSeries = loadElevationSeries();
+        var elevWhen = (elevSeries != null) ? ((elevSeries as Array)[0] as Array<Number>) : null;
+        var elevAlt = (elevSeries != null) ? ((elevSeries as Array)[1] as Array<Float>) : null;
+        var ei = 0;
+
         for (var m = 0; m <= final; m++) {
             var sd = (samples[m] as SensorHistory.SensorSample).data;
             if (sd != null) {
-                if (pressureMax == null || (sd as Float) > (pressureMax as Float)) {
-                    pressureMax = sd;
+                var swhen = (samples[m] as SensorHistory.SensorSample).when.value();
+                var pa = sd as Float;
+                if (elevWhen != null && elevAlt != null) {
+                    var ez = elevWhen as Array<Number>;
+                    var ea = elevAlt as Array<Float>;
+                    while (ei < ez.size() - 1 && ez[ei] > swhen) { ei += 1; }
+                    pa = pa / mslFactor(ea[ei]);
                 }
-                if (pressureMin == null || (sd as Float) < (pressureMin as Float)) {
-                    pressureMin = sd;
+                if (pressureMax == null || pa > (pressureMax as Float)) {
+                    pressureMax = pa;
                 }
-                var ageH = (t0 - (samples[m] as SensorHistory.SensorSample).when.value()) / 3600.0;
-                if (regN == 0) { regRef = sd as Float; }
-                var yNorm = (sd as Float) - regRef;
+                if (pressureMin == null || pa < (pressureMin as Float)) {
+                    pressureMin = pa;
+                }
+                var ageH = (t0 - swhen) / 3600.0;
+                if (regN == 0) { regRef = pa; }
+                var yNorm = pa - regRef;
                 var xSq = ageH * ageH;
                 regN += 1;
                 regSx += ageH;
@@ -507,6 +531,15 @@ class SimplyWeatherView extends WatchUi.View {
                 regSy += yNorm;
                 regSxy += ageH * yNorm;
                 regSx2y += xSq * yNorm;
+
+                // Independent short-window (last 3h) linear accumulators.
+                if (ageH <= 3.0) {
+                    short3N += 1;
+                    short3Sx += ageH;
+                    short3Sy += yNorm;
+                    short3Sxy += ageH * yNorm;
+                    short3Sx2 += xSq;
+                }
             }
         }
 
@@ -540,14 +573,16 @@ class SimplyWeatherView extends WatchUi.View {
             var pNewest = null;
             var pOldest = null;
             for (var k = 0; k <= final; k++) {
-                if ((samples[k] as SensorHistory.SensorSample).data != null) {
-                    pNewest = (samples[k] as SensorHistory.SensorSample).data;
+                var sk = samples[k] as SensorHistory.SensorSample;
+                if (sk.data != null) {
+                    pNewest = mslReduce(sk.data as Float, sk.when.value(), elevWhen, elevAlt);
                     break;
                 }
             }
             for (var l = final; l >= 0; l--) {
-                if ((samples[l] as SensorHistory.SensorSample).data != null) {
-                    pOldest = (samples[l] as SensorHistory.SensorSample).data;
+                var sl = samples[l] as SensorHistory.SensorSample;
+                if (sl.data != null) {
+                    pOldest = mslReduce(sl.data as Float, sl.when.value(), elevWhen, elevAlt);
                     break;
                 }
             }
@@ -574,29 +609,26 @@ class SimplyWeatherView extends WatchUi.View {
             trend = 2;
         }
 
-        // --- 3h front detection (from quadratic fit) ---
-        if (trend == 0 && regN > 5) {
-            var xMean = regSx / regN.toFloat();
-            var shortDiff = 3.0 * (quadA * (2.0 * xMean - 3.0) - quadB);
-            var hourMid = hourNow - 3.0;
-            var shortDiurnal = tideAmp * (Math.cos(phase * (hourNow - 9.5)) - Math.cos(phase * (hourMid - 9.5)));
-            shortDiff = shortDiff - shortDiurnal;
-            var shortLimit = mSteadyLimit * 3.0;
-            if (shortDiff > shortLimit) {
-                trend = 1;
-            } else if (shortDiff < -shortLimit) {
-                trend = 2;
+        // --- 3h front detection (independent short-window linear fit) ---
+        // Fits pressure vs time over ONLY the last 3h, decoupled from the 6h
+        // parabola's conditioning, so a poorly-shaped long fit can't fabricate a
+        // short-term front. Needs >=3 recent samples with real time spread.
+        if (trend == 0 && short3N >= 3) {
+            var sN = short3N.toFloat();
+            var sDenom = sN * short3Sx2 - short3Sx * short3Sx;
+            if (sDenom > 0.001) {
+                var slopeAge = (sN * short3Sxy - short3Sx * short3Sy) / sDenom;
+                var shortDiff = -3.0 * slopeAge;   // change over the last 3h (now - 3h ago)
+                var hourMid = hourNow - 3.0;
+                var shortDiurnal = tideAmp * (Math.cos(phase * (hourNow - 9.5)) - Math.cos(phase * (hourMid - 9.5)));
+                shortDiff = shortDiff - shortDiurnal;
+                var shortLimit = mSteadyLimit * 3.0;
+                if (shortDiff > shortLimit) {
+                    trend = 1;
+                } else if (shortDiff < -shortLimit) {
+                    trend = 2;
+                }
             }
-        }
-
-        // --- Acceleration from quadratic fit ---
-        var accelHpa = 2.0 * quadA / 100.0;
-        if (accelHpa > -0.3 && accelHpa < 0.3) { accelHpa = 0.0; }
-
-        if (trend == 0 && accelHpa <= -0.4) {
-            trend = 2;
-        } else if (trend == 2 && accelHpa > 0.5) {
-            trend = 0;
         }
 
         // --- Trend hysteresis: quick to alarm, slow to clear ---
@@ -663,7 +695,10 @@ class SimplyWeatherView extends WatchUi.View {
             mLastPressureRefreshMs = nowMs;
         }
 
-        mLastForecast = Sager.WeatherForecast(currentPress, month, mDir, trend, mNorthSouth, mSteadyHours);
+        // Fractional month (day-level) so the forecaster's seasonal ramp is smooth.
+        var dayInfo = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
+        var monthF = month.toFloat() + (dayInfo.day.toFloat() - 1.0) / 30.4;
+        mLastForecast = Sager.WeatherForecast(currentPress, monthF, mDir, trend, mNorthSouth, mSteadyHours);
 
         var forecast = mLastForecast as Array;
 
@@ -1021,16 +1056,64 @@ class SimplyWeatherView extends WatchUi.View {
             if (elevIter != null) {
                 var sample = elevIter.next();
                 if (sample != null && sample.data != null) {
-                    var altitude = (sample.data as Float);
                     var stationHpa = stationPa / 100.0;
-                    var factor = Math.pow(1.0 - (0.0065 * altitude / 288.15), 5.255);
-                    return Math.round(stationHpa / factor).toNumber();
+                    return Math.round(stationHpa / mslFactor(sample.data as Float)).toNumber();
                 }
             }
         }
 
         // Final fallback: raw station pressure
         return Math.round(stationPa / 100.0).toNumber();
+    }
+
+    // Barometric reduction factor for a given altitude (m): P_msl = P_station / factor.
+    // Altitude is clamped to a physically sane band so a glitched elevation sample
+    // (sensor encoding errors surface as wild values) can't drive the base term to
+    // zero/negative, where Math.pow would return NaN and poison the whole series.
+    hidden function mslFactor(altitudeM as Float) as Float {
+        var a = altitudeM;
+        if (a > 9000.0) { a = 9000.0; }
+        else if (a < -500.0) { a = -500.0; }
+        return Math.pow(1.0 - (0.0065 * a / 288.15), 5.255);
+    }
+
+    // Load elevation history (newest-first) into parallel [whenSec[], altM[]] arrays
+    // so each pressure sample can be reduced to MSL at its own recorded altitude.
+    // Returns null when no elevation history is available (callers then use raw
+    // station pressure, i.e. behave exactly as before — safe at constant altitude).
+    hidden function loadElevationSeries() as Array or Null {
+        if (!((Toybox has :SensorHistory) && (Toybox.SensorHistory has :getElevationHistory))) {
+            return null;
+        }
+        var it = SensorHistory.getElevationHistory({:order => SensorHistory.ORDER_NEWEST_FIRST});
+        if (it == null) { return null; }
+        var whenArr = new Array<Number>[0];
+        var altArr = new Array<Float>[0];
+        var s = it.next();
+        var guard = 0;
+        while (s != null && guard < 600) {
+            if (s.data != null) {
+                whenArr.add(s.when.value());
+                altArr.add(s.data as Float);
+            }
+            s = it.next();
+            guard += 1;
+        }
+        if (whenArr.size() == 0) { return null; }
+        return [whenArr, altArr];
+    }
+
+    // Reduce a single station-pressure sample to MSL using the most-recent
+    // elevation at or before its timestamp (zero-order hold). Returns the raw
+    // value unchanged when no elevation series is available.
+    hidden function mslReduce(stationPa as Float, whenSec as Number, elevWhen as Array<Number> or Null, elevAlt as Array<Float> or Null) as Float {
+        if (elevWhen == null || elevAlt == null) { return stationPa; }
+        var ez = elevWhen as Array<Number>;
+        var ea = elevAlt as Array<Float>;
+        if (ez.size() == 0) { return stationPa; }
+        var idx = 0;
+        while (idx < ez.size() - 1 && ez[idx] > whenSec) { idx += 1; }
+        return stationPa / mslFactor(ea[idx]);
     }
 
     function getTemperatureIterator() as SensorHistory.SensorHistoryIterator or Null {
