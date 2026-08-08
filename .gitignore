@@ -12,3 +12,8 @@ internal-mir/
 
 # Agent memory (local only — never publish)
 AGENTS.md
+
+# Python reference model for the Sager forecaster, plus the Dai & Wang (1999)
+# tide grids recovered from the Wayback Machine. Local only for now; note the
+# UCAR originals are 404, so reference/data/dai1999/ is not re-downloadable.
+reference/
