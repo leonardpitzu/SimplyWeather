@@ -15,7 +15,7 @@ import Toybox.Activity;
 import Sager;
 
 const cTime = 0.0 - ((Gregorian.SECONDS_PER_HOUR * 6) + (Gregorian.SECONDS_PER_MINUTE * 10));
-const cSteady = 35.0; // Pa/h dead-zone (0.35 hPa/h) — tighter for barometer-only forecast
+const cSteady = 17.0; // Pa/h dead-zone (0.17 hPa/h = 1.0 hPa/6h, Sager/WMO "slowly" boundary)
 const cShowDetails = true;
 const MINS_5 = (Gregorian.SECONDS_PER_MINUTE * 5);
 const DIR_CONFIRM_SAMPLES = 4;
@@ -37,6 +37,23 @@ const HEADING_REDRAW_THRESHOLD = 0.50;
 const IDLE_REDRAW_INTERVAL_MS = 1000;
 const CALENDAR_REFRESH_INTERVAL_MS = 60000;
 const PRESSURE_REFRESH_INTERVAL_MS = 15000;
+// Wrist sensor sheds accumulated body heat over a few minutes once removed.
+const BIAS_HALF_LIFE_MS = 180000.0;
+// Elevation on this watch is barometric whenever the altimeter is not GPS-calibrated,
+// so feeding it back into the MSL reduction can cancel a real pressure fall. Gate on
+// 10-minute anchors: 50 m/h is ~6 hPa/h, above even severe cyclogenesis (42 m/h) and
+// far below hiking (200-800 m/h). Anchoring keeps the test at ~10 sigma of sensor
+// noise; gating raw 2-minute samples sits at 2 sigma and random-walks ~1 hPa.
+const ALT_SLEW_M_PER_H = 50.0;
+const ALT_ANCHOR_SEC = 600;
+// Diurnal S1 tide amplitude (Pa). Measured 33-96 Pa week to week at the reference
+// station against a textbook 10 Pa, and it does not follow a latitude law, so this
+// is the minimax value over the observed range rather than a fit.
+const S1_AMP_PA = 55.0;
+// Persistence is measured from the pressure record itself, not from a run counter.
+const STEADY_LOOKBACK_SEC = 30 * 3600;
+const STEADY_STEP_SEC = 1800;
+const STEADY_BAND_PA = 150.0;
 
 class SimplyWeatherView extends WatchUi.View {
     var mTime as Float = cTime;
@@ -82,6 +99,8 @@ class SimplyWeatherView extends WatchUi.View {
     var currentPress = 0;
     var mSteadyHours = 0;
     var mTemperatureText as String = "";
+    var mWornBias as Float = 0.0;
+    var mUnwornSinceMs as Number = -1;
     var mScreenLayout as Array<Numeric> or Null = null;
     var mCompassLabels as Array<String> = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
     var mTrendTextCache as Array<String> = [];
@@ -431,6 +450,7 @@ class SimplyWeatherView extends WatchUi.View {
     }
 
     function refreshPressureTrendAndCurrent() as Void {
+        var nowMoment = Time.now();
         var samples = new Array<SensorHistory.SensorSample>[0];
         var pressureIter = getPressureIterator();
         var oldest = null;
@@ -440,8 +460,7 @@ class SimplyWeatherView extends WatchUi.View {
             if (firstSample != null) {
                 samples.add(firstSample as SensorHistory.SensorSample);
 
-                var now = Time.now();
-                var start = now.add(new Time.Duration(mTime.toNumber()));
+                var start = nowMoment.add(new Time.Duration(mTime.toNumber()));
                 oldest = pressureIter.getOldestSampleTime();
                 if (oldest == null || (start as Time.Moment).greaterThan(oldest as Time.Moment)) {
                     oldest = start;
@@ -485,13 +504,20 @@ class SimplyWeatherView extends WatchUi.View {
         var regSy = 0.0;
         var regSxy = 0.0;
         var regSx2y = 0.0;
-        // Independent short-window (last 3h) linear-fit accumulators for front detection.
+        // Independent short-window linear-fit accumulators for front detection.
         var short3N = 0;
         var short3Sx = 0.0;
         var short3Sy = 0.0;
         var short3Sxy = 0.0;
         var short3Sx2 = 0.0;
-        var t0 = (final >= 0) ? (samples[0] as SensorHistory.SensorSample).when.value() : 0;
+        var short15N = 0;
+        var short15Sx = 0.0;
+        var short15Sy = 0.0;
+        var short15Sxy = 0.0;
+        var short15Sx2 = 0.0;
+        // Ages are measured from now, not from the newest sample, so a stale reading
+        // shifts the fit the same way it does on the watch face.
+        var t0 = nowMoment.value();
 
         // Reduce every sample to mean-sea-level before regression so altitude
         // changes (hike, cable car, bike, elevator) cancel and only genuine
@@ -511,7 +537,7 @@ class SimplyWeatherView extends WatchUi.View {
                     var ez = elevWhen as Array<Number>;
                     var ea = elevAlt as Array<Float>;
                     while (ei < ez.size() - 1 && ez[ei] > swhen) { ei += 1; }
-                    pa = pa / mslFactor(ea[ei]);
+                    pa = pa / mslFactor(altAtAnchor(ez, ea, ei, swhen));
                 }
                 if (pressureMax == null || pa > (pressureMax as Float)) {
                     pressureMax = pa;
@@ -532,13 +558,20 @@ class SimplyWeatherView extends WatchUi.View {
                 regSxy += ageH * yNorm;
                 regSx2y += xSq * yNorm;
 
-                // Independent short-window (last 3h) linear accumulators.
+                // Independent short-window linear accumulators.
                 if (ageH <= 3.0) {
                     short3N += 1;
                     short3Sx += ageH;
                     short3Sy += yNorm;
                     short3Sxy += ageH * yNorm;
                     short3Sx2 += xSq;
+                    if (ageH <= 1.5) {
+                        short15N += 1;
+                        short15Sx += ageH;
+                        short15Sy += yNorm;
+                        short15Sxy += ageH * yNorm;
+                        short15Sx2 += xSq;
+                    }
                 }
             }
         }
@@ -591,14 +624,12 @@ class SimplyWeatherView extends WatchUi.View {
             }
         }
 
-        // --- Diurnal tide correction ---
-        var timeInfo = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
-        var hourNow = timeInfo.hour.toFloat() + timeInfo.min.toFloat() / 60.0;
+        // --- Atmospheric tide correction (S2 + S1, local solar time) ---
+        var timeInfo = Gregorian.info(nowMoment, Time.FORMAT_SHORT);
+        var hourNow = timeInfo.hour.toFloat() + timeInfo.min.toFloat() / 60.0 + getSolarShiftHours();
         var hourStart = hourNow + (mTime / Gregorian.SECONDS_PER_HOUR.toFloat());
-        var phase = 2.0 * Math.PI / 12.0;
         var tideAmp = getDiurnalAmplitude();
-        var diurnalCorr = tideAmp * (Math.cos(phase * (hourNow - 9.5)) - Math.cos(phase * (hourStart - 9.5)));
-        pressureDiff = pressureDiff - diurnalCorr;
+        pressureDiff = pressureDiff - (tidePa(hourNow, tideAmp) - tidePa(hourStart, tideAmp));
 
         var scaledLimit = mSteadyLimit * windowHours;
 
@@ -609,23 +640,30 @@ class SimplyWeatherView extends WatchUi.View {
             trend = 2;
         }
 
-        // --- 3h front detection (independent short-window linear fit) ---
-        // Fits pressure vs time over ONLY the last 3h, decoupled from the 6h
-        // parabola's conditioning, so a poorly-shaped long fit can't fabricate a
-        // short-term front. Needs >=3 recent samples with real time spread.
-        if (trend == 0 && short3N >= 3) {
-            var sN = short3N.toFloat();
-            var sDenom = sN * short3Sx2 - short3Sx * short3Sx;
-            if (sDenom > 0.001) {
-                var slopeAge = (sN * short3Sxy - short3Sx * short3Sy) / sDenom;
-                var shortDiff = -3.0 * slopeAge;   // change over the last 3h (now - 3h ago)
-                var hourMid = hourNow - 3.0;
-                var shortDiurnal = tideAmp * (Math.cos(phase * (hourNow - 9.5)) - Math.cos(phase * (hourMid - 9.5)));
-                shortDiff = shortDiff - shortDiurnal;
-                var shortLimit = mSteadyLimit * 3.0;
-                if (shortDiff > shortLimit) {
+        // --- Shorter windows for early onset ---
+        // Fitted independently of the 6 h parabola so a poorly-conditioned long fit
+        // cannot fabricate a front, and so a fast-arriving front is not diluted by
+        // the quiet hours ahead of it. Verified to cut warning lag by 0.75-1.75 h.
+        if (trend == 0) {
+            var d3 = shortWindowDiff(short3N, short3Sx, short3Sy, short3Sxy, short3Sx2,
+                                     3.0, hourNow, tideAmp);
+            if (d3 != null) {
+                var lim3 = mSteadyLimit * 3.0;
+                if ((d3 as Float) > lim3) {
                     trend = 1;
-                } else if (shortDiff < -shortLimit) {
+                } else if ((d3 as Float) < -lim3) {
+                    trend = 2;
+                }
+            }
+        }
+        if (trend == 0) {
+            var d15 = shortWindowDiff(short15N, short15Sx, short15Sy, short15Sxy, short15Sx2,
+                                      1.5, hourNow, tideAmp);
+            if (d15 != null) {
+                var lim15 = mSteadyLimit * 1.5;
+                if ((d15 as Float) > lim15) {
+                    trend = 1;
+                } else if ((d15 as Float) < -lim15) {
                     trend = 2;
                 }
             }
@@ -664,37 +702,11 @@ class SimplyWeatherView extends WatchUi.View {
 
         currentPress = getSeaLevelPressure(current as Float);
 
-        // --- Persistence tracking (Storage-backed, survives reboots) ---
-        // Timestamp-guarded: max 1 increment per hour regardless of call frequency.
-        if (pressureMax != null && pressureMin != null) {
-            var pressureRange = (pressureMax as Float) - (pressureMin as Float);
-            if (pressureRange < 200.0) {
-                var stored = Storage.getValue("sH");
-                var lastTs = Storage.getValue("sT");
-                var nowSec = Time.now().value();
-                if (lastTs != null && (nowSec - (lastTs as Number)) < 3600) {
-                    // Less than 1h since last increment — just re-read
-                    mSteadyHours = (stored != null) ? (stored as Number) : 0;
-                } else {
-                    // ≥1h elapsed or first run — increment
-                    mSteadyHours = (stored != null) ? (stored as Number) + 1 : 1;
-                    Storage.setValue("sT", nowSec);
-                }
-            } else {
-                mSteadyHours = 0;
-                Storage.setValue("sT", null);
-            }
-            Storage.setValue("sH", mSteadyHours);
-        }
+        // --- Persistence tracking (measured from the pressure record) ---
+        mSteadyHours = measureSteadyHours(nowMoment.value());
     }
 
     function refreshForecast(month as Number) as Void {
-        var nowMs = System.getTimer();
-        if (mLastPressureRefreshMs < 0 || (nowMs - mLastPressureRefreshMs) >= PRESSURE_REFRESH_INTERVAL_MS) {
-            refreshPressureTrendAndCurrent();
-            mLastPressureRefreshMs = nowMs;
-        }
-
         // Fractional month (day-level) so the forecaster's seasonal ramp is smooth.
         var dayInfo = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
         var monthF = month.toFloat() + (dayInfo.day.toFloat() - 1.0) / 30.4;
@@ -742,12 +754,14 @@ class SimplyWeatherView extends WatchUi.View {
 
     function onPosition(positionInfo as Position.Info) as Void {
         if (positionInfo != null && positionInfo.position != null) {
-            var lat = positionInfo.position.toDegrees()[0];
+            var degrees = positionInfo.position.toDegrees();
+            var lat = degrees[0];
             mNorthSouth = lat >= 0 ? 1 : 0;
-            // Cache diurnal tide amplitude from latitude: A ≈ 125 * cos²(lat) Pa
+            // Semidiurnal tide amplitude: A = 1.16 hPa * cos^3(lat) (Chapman & Lindzen)
             var latRad = (lat as Double).toFloat() * Math.PI / 180.0;
             var cosLat = Math.cos(latRad);
-            Storage.setValue("dA", (125.0 * cosLat * cosLat).toNumber());
+            Storage.setValue("dA", (116.0 * cosLat * cosLat * cosLat).toNumber());
+            Storage.setValue("lonDeg", (degrees[1] as Double).toFloat());
         } else {
             mNorthSouth = mDefHemi;
         }
@@ -826,13 +840,23 @@ class SimplyWeatherView extends WatchUi.View {
 
         dc.drawText(mCentre, layouts[0], Graphics.FONT_TINY, pString(mDir), Graphics.TEXT_JUSTIFY_CENTER);
 
-        // --- Forecast Update (only if inputs change) ---
-        if (mLastDir != mDir || mLastHemisphere != mNorthSouth || mLastForecast == null) {
+        // --- Pressure/trend refresh, on its own cadence ---
+        // Must not hang off wind direction: in calm mode mDir never changes, which
+        // otherwise froze pressure, trend and forecast for the whole session.
+        var nowMs = System.getTimer();
+        var pressureRefreshed = false;
+        if (mLastPressureRefreshMs < 0 || (nowMs - mLastPressureRefreshMs) >= PRESSURE_REFRESH_INTERVAL_MS) {
+            refreshPressureTrendAndCurrent();
+            mLastPressureRefreshMs = nowMs;
+            pressureRefreshed = true;
+        }
+
+        // --- Forecast Update ---
+        if (pressureRefreshed || mLastDir != mDir || mLastHemisphere != mNorthSouth || mLastForecast == null) {
             refreshForecast(month);
         }
 
         // --- Temperature refresh (decoupled from wind/forecast) ---
-        var nowMs = System.getTimer();
         if (mLastTemperatureRefreshMs < 0 || (nowMs - mLastTemperatureRefreshMs) >= PRESSURE_REFRESH_INTERVAL_MS) {
             mTemperatureText = getTemperature(sensorInfo);
             mLastTemperatureRefreshMs = nowMs;
@@ -1037,7 +1061,61 @@ class SimplyWeatherView extends WatchUi.View {
     // Computed at GPS fix time (onPosition); read from Storage afterwards.
     hidden function getDiurnalAmplitude() as Float {
         var stored = Storage.getValue("dA");
-        return (stored != null) ? (stored as Number).toFloat() : 60.0;
+        return (stored != null) ? (stored as Number).toFloat() : 41.0;
+    }
+
+    // Offset from civil clock time to local solar time (hours). The semidiurnal
+    // atmospheric tide is phased to solar time, so reading the wrist clock directly
+    // costs up to ±1.5 h of phase error inside a timezone, DST included.
+    hidden function getSolarShiftHours() as Float {
+        var lon = Storage.getValue("lonDeg");
+        if (lon == null) { return 0.0; }
+        var shift = ((lon as Float) / 15.0) - (System.getClockTime().timeZoneOffset / 3600.0);
+        // No timezone sits this far from solar time, so the cached longitude must be
+        // stale after travel. A 6 h error would invert the 12 h tide, so use none.
+        if (shift > 3.0 || shift < -3.0) { return 0.0; }
+        return shift;
+    }
+
+    // How long pressure has actually held within a narrow band, read from the sensor
+    // record so it means the same thing regardless of how often either app ran.
+    // Uses station pressure: a climb blows the band open and reports 0, which is the
+    // safe direction.
+    hidden function measureSteadyHours(nowSec as Number) as Number {
+        if (!((Toybox has :SensorHistory) && (Toybox.SensorHistory has :getPressureHistory))) {
+            return 0;
+        }
+        var it = SensorHistory.getPressureHistory({
+            :period => new Time.Duration(STEADY_LOOKBACK_SEC),
+            :order => SensorHistory.ORDER_NEWEST_FIRST
+        });
+        if (it == null) { return 0; }
+
+        var refPa = null;
+        var acceptBefore = null;
+        var steadySec = 0;
+        var guard = 0;
+        var s = it.next();
+        while (s != null && guard < 400) {
+            guard += 1;
+            var d = s.data;
+            if (d != null) {
+                var swhen = s.when.value();
+                if (acceptBefore == null || swhen <= (acceptBefore as Number)) {
+                    acceptBefore = swhen - STEADY_STEP_SEC;
+                    var pa = d as Float;
+                    if (refPa == null) { refPa = pa; }
+                    var dev = pa - (refPa as Float);
+                    if (dev < 0) { dev = -dev; }
+                    if (dev > STEADY_BAND_PA) { break; }
+                    steadySec = nowSec - swhen;
+                }
+            }
+            s = it.next();
+        }
+
+        var hours = steadySec / 3600;
+        return (hours > 24) ? 24 : hours;
     }
 
     hidden function getSeaLevelPressure(stationPa as Float) as Number {
@@ -1077,8 +1155,9 @@ class SimplyWeatherView extends WatchUi.View {
         return Math.pow(1.0 - (0.0065 * a / 288.15), 5.255);
     }
 
-    // Load elevation history (newest-first) into parallel [whenSec[], altM[]] arrays
-    // so each pressure sample can be reduced to MSL at its own recorded altitude.
+    // Load elevation history into parallel [whenSec[], altM[]] anchors, newest-first,
+    // decimated to ALT_ANCHOR_SEC and rebuilt from the present backwards through a
+    // slew-rate gate, so only movement too fast to be weather counts as real altitude.
     // Returns null when no elevation history is available (callers then use raw
     // station pressure, i.e. behave exactly as before — safe at constant altitude).
     hidden function loadElevationSeries() as Array or Null {
@@ -1091,16 +1170,70 @@ class SimplyWeatherView extends WatchUi.View {
         var altArr = new Array<Float>[0];
         var s = it.next();
         var guard = 0;
+        var acceptBefore = null;
+        var prevRaw = null;
+        var prevWhen = 0;
+        var gated = 0.0;
         while (s != null && guard < 600) {
+            guard += 1;
             if (s.data != null) {
-                whenArr.add(s.when.value());
-                altArr.add(s.data as Float);
+                var swhen = s.when.value();
+                if (acceptBefore == null || swhen <= (acceptBefore as Number)) {
+                    acceptBefore = swhen - ALT_ANCHOR_SEC;
+                    var raw = s.data as Float;
+                    if (prevRaw == null) {
+                        gated = raw;
+                    } else {
+                        var dtH = (prevWhen - swhen) / 3600.0;
+                        var dAlt = raw - (prevRaw as Float);
+                        var mag = (dAlt < 0) ? -dAlt : dAlt;
+                        if (dtH > 0.0 && mag > ALT_SLEW_M_PER_H * dtH) {
+                            gated += dAlt;
+                        }
+                    }
+                    prevRaw = raw;
+                    prevWhen = swhen;
+                    whenArr.add(swhen);
+                    altArr.add(gated);
+                }
             }
             s = it.next();
-            guard += 1;
         }
         if (whenArr.size() == 0) { return null; }
         return [whenArr, altArr];
+    }
+
+    // Gated altitude at a timestamp, linearly interpolated between anchors. Holding
+    // the nearest anchor instead would misplace a 400 m/h ascent by up to 33 m (4 hPa).
+    hidden function altAtAnchor(ez as Array<Number>, ea as Array<Float>, idx as Number, whenSec as Number) as Float {
+        var altM = ea[idx];
+        if (idx > 0 && ez[idx - 1] > whenSec) {
+            var span = (ez[idx - 1] - ez[idx]).toFloat();
+            if (span > 0.0) {
+                altM = altM + (ea[idx - 1] - altM) * ((whenSec - ez[idx]).toFloat() / span);
+            }
+        }
+        return altM;
+    }
+
+    // Atmospheric tide at a local solar hour (Pa). S2 is the clean global resonance
+    // and scales from latitude; S1 is thermally driven and uses a fixed amplitude.
+    hidden function tidePa(solarHour as Float, s2Amp as Float) as Float {
+        return s2Amp * Math.cos(2.0 * Math.PI * (solarHour - 9.5) / 12.0)
+             + S1_AMP_PA * Math.cos(2.0 * Math.PI * (solarHour - 4.8) / 24.0);
+    }
+
+    // Tide-corrected pressure change over the last `hours`, from a short-window linear
+    // fit. Returns null when the window is too thin or has no time spread.
+    hidden function shortWindowDiff(n as Number, sx as Float, sy as Float, sxy as Float,
+                                    sx2 as Float, hours as Float, hourNow as Float,
+                                    s2Amp as Float) as Float or Null {
+        if (n < 3) { return null; }
+        var nf = n.toFloat();
+        var denom = nf * sx2 - sx * sx;
+        if (denom <= 0.001) { return null; }
+        var slopeAge = (nf * sxy - sx * sy) / denom;
+        return (-hours * slopeAge) - (tidePa(hourNow, s2Amp) - tidePa(hourNow - hours, s2Amp));
     }
 
     // Reduce a single station-pressure sample to MSL using the most-recent
@@ -1113,7 +1246,7 @@ class SimplyWeatherView extends WatchUi.View {
         if (ez.size() == 0) { return stationPa; }
         var idx = 0;
         while (idx < ez.size() - 1 && ez[idx] > whenSec) { idx += 1; }
-        return stationPa / mslFactor(ea[idx]);
+        return stationPa / mslFactor(altAtAnchor(ez, ea, idx, whenSec));
     }
 
     function getTemperatureIterator() as SensorHistory.SensorHistoryIterator or Null {
@@ -1140,15 +1273,25 @@ class SimplyWeatherView extends WatchUi.View {
 
         var worn = sensorInfo != null && sensorInfo has :onBody && sensorInfo.onBody != null ? sensorInfo.onBody : true;
 
-        if (temperature != null && worn) {
-            // Use heart rate as activity proxy for body-heat bias.
-            // Higher HR → more blood flow → warmer skin → larger offset.
-            var hr = (sensorInfo != null && sensorInfo has :heartRate && sensorInfo.heartRate != null) ? sensorInfo.heartRate : 0;
-            if (hr > 130)      { bias = 9.0; }
-            else if (hr > 100) { bias = 7.5; }
-            else if (hr > 70)  { bias = 6.0; }
-            else if (hr > 0)   { bias = 5.0; }
-            else               { bias = 6.0; }
+        if (temperature != null) {
+            if (worn) {
+                // Use heart rate as activity proxy for body-heat bias.
+                // Higher HR → more blood flow → warmer skin → larger offset.
+                var hr = (sensorInfo != null && sensorInfo has :heartRate && sensorInfo.heartRate != null) ? sensorInfo.heartRate : 0;
+                if (hr > 130)      { mWornBias = 9.0; }
+                else if (hr > 100) { mWornBias = 7.5; }
+                else if (hr > 70)  { mWornBias = 6.0; }
+                else if (hr > 0)   { mWornBias = 5.0; }
+                else               { mWornBias = 6.0; }
+                mUnwornSinceMs = -1;
+                bias = mWornBias;
+            } else {
+                // Decay the last bias rather than dropping it, otherwise taking the
+                // watch off steps the displayed temperature by several degrees.
+                if (mUnwornSinceMs < 0) { mUnwornSinceMs = System.getTimer(); }
+                var elapsed = (System.getTimer() - mUnwornSinceMs).toFloat();
+                bias = mWornBias * Math.pow(0.5, elapsed / BIAS_HALF_LIFE_MS);
+            }
         }
 
         if (temperature != null) {
