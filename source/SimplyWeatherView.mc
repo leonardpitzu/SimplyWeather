@@ -1106,6 +1106,170 @@ class SimplyWeatherView extends WatchUi.View {
         return null;
     }
 
+    // ── Learned daily cycle ────────────────────────────────────────────────
+    // The hourly path costs no sensor access at all: the face already reads one
+    // pressure sample an hour, so the 24 h mean and the sample 12 h back both come
+    // out of a stored 25-slot ring. Iterating the sensor log is the expensive part,
+    // so the full scan below runs only while the profile has too few bins to answer.
+    hidden function updateDailyProfile(nowSec as Number, solarHourNow as Float,
+                                       newestWhen as Number or Null, newestMsl as Float or Null,
+                                       s2Amp as Float,
+                                       elevWhen as Array<Number> or Null,
+                                       elevAlt as Array<Float> or Null) as Array<Float> or Null {
+        var stored = Storage.getValue("dpB");
+        var bins;
+        var mask = Storage.getValue("dpM");
+        if (stored instanceof Array && (stored as Array).size() == 24 && mask instanceof Number) {
+            bins = stored as Array<Float>;
+        } else {
+            bins = new Array<Float>[24];
+            for (var i = 0; i < 24; i++) { bins[i] = 0.0; }
+            mask = 0;
+        }
+
+        var ringT = Storage.getValue("dpRt");
+        var ringV = Storage.getValue("dpRv");
+        if (!(ringT instanceof Array) || !(ringV instanceof Array)
+            || (ringT as Array).size() != (ringV as Array).size()) {
+            ringT = new Array<Number>[0];
+            ringV = new Array<Float>[0];
+        }
+        var scanAt = Storage.getValue("dpScan");
+        if (!(scanAt instanceof Number)) { scanAt = 0; }
+
+        // The cycle belongs to the terrain, so it does not travel with the watch.
+        var lat = getLatitude();
+        var lon = getLongitude();
+        var prevLat = Storage.getValue("dpLat");
+        var prevLon = Storage.getValue("dpLon");
+        if (Sager.profileMoved(lat, lon, prevLat, prevLon)) {
+            for (var i = 0; i < 24; i++) { bins[i] = 0.0; }
+            mask = 0;
+            ringT = new Array<Number>[0];
+            ringV = new Array<Float>[0];
+            scanAt = 0;
+        }
+        // These record where the profile was learned, so they are written only when
+        // it starts over. That is also what keeps flash writes off the hourly path.
+        if (mask == 0 && lat != null) {
+            Storage.setValue("dpLat", lat);
+            Storage.setValue("dpLon", lon);
+        }
+
+        var rt = ringT as Array<Number>;
+        var rv = ringV as Array<Float>;
+        if (newestWhen != null && newestMsl != null
+            && (rt.size() == 0 || (newestWhen as Number) > rt[rt.size() - 1])) {
+            rt.add(newestWhen as Number);
+            rv.add(newestMsl as Float);
+            if (rt.size() > Sager.LEARN_RING_SLOTS) {
+                rt = rt.slice(rt.size() - Sager.LEARN_RING_SLOTS, null);
+                rv = rv.slice(rv.size() - Sager.LEARN_RING_SLOTS, null);
+            }
+        }
+
+        var filled = Sager.binsFilled(mask as Number);
+        if (filled < Sager.LEARN_MIN_BINS && (nowSec - (scanAt as Number)) >= Sager.LEARN_RESCAN_SEC) {
+            scanAt = nowSec;
+            mask = harvestDailyProfile(bins, mask as Number, nowSec, solarHourNow, s2Amp, elevWhen, elevAlt);
+        } else {
+            mask = observeDailyProfile(bins, mask as Number, rt, rv, nowSec, solarHourNow, s2Amp);
+        }
+
+        Storage.setValue("dpB", bins);
+        Storage.setValue("dpM", mask);
+        Storage.setValue("dpRt", rt);
+        Storage.setValue("dpRv", rv);
+        Storage.setValue("dpScan", scanAt);
+        return Sager.learnedS1(bins, mask as Number);
+    }
+
+    // Fold the ring's middle sample in. Reads nothing.
+    hidden function observeDailyProfile(bins as Array<Float>, mask as Number,
+                                        rt as Array<Number>, rv as Array<Float>,
+                                        nowSec as Number, solarHourNow as Float,
+                                        s2Amp as Float) as Number {
+        var n = rt.size();
+        if (n < Sager.LEARN_RING_SLOTS) { return mask; }
+        if ((rt[n - 1] - rt[0]) < (Sager.LEARN_WINDOW_SEC * Sager.LEARN_MIN_COVERAGE).toNumber()) {
+            return mask;
+        }
+        // A hole in the record tilts the mean towards whichever half survived.
+        for (var i = 1; i < n; i++) {
+            if ((rt[i] - rt[i - 1]) > Sager.LEARN_RING_MAX_GAP_SEC) { return mask; }
+        }
+        var centre = n / 2;
+        var solarHour = solarHourNow - (nowSec - rt[centre]).toFloat() / 3600.0;
+        return Sager.foldResidual(bins, mask, solarHour,
+                                  Sager.residualPa(rv, 0, n - 1, centre, solarHour, s2Amp));
+    }
+
+    // One pass over the record, taking every hour it can centre a 24 h window on.
+    // Only worth its battery while the profile cannot answer at all.
+    hidden function harvestDailyProfile(bins as Array<Float>, mask as Number,
+                                        nowSec as Number, solarHourNow as Float,
+                                        s2Amp as Float,
+                                        elevWhen as Array<Number> or Null,
+                                        elevAlt as Array<Float> or Null) as Number {
+        var it = getPressureIterator();
+        if (it == null) { return mask; }
+
+        var whenArr = new Array<Number>[0];
+        var mslArr = new Array<Float>[0];
+        var acceptBefore = null;
+        var guard = 0;
+        var s = it.next();
+        while (s != null && guard < 4000 && whenArr.size() < 500) {
+            guard += 1;
+            var d = s.data;
+            if (d != null) {
+                var swhen = s.when.value();
+                if (acceptBefore == null || swhen <= (acceptBefore as Number)) {
+                    acceptBefore = swhen - Sager.LEARN_DECIMATE_SEC;
+                    whenArr.add(swhen);
+                    mslArr.add(mslReduce(d as Float, swhen, elevWhen, elevAlt));
+                }
+            }
+            s = it.next();
+        }
+
+        var n = whenArr.size();
+        // Fold oldest first: the running average weights whatever arrives last, so
+        // walking the record backwards would leave the profile trusting the oldest
+        // day most.
+        var ascWhen = new Array<Number>[n];
+        var ascMsl = new Array<Float>[n];
+        for (var i = 0; i < n; i++) {
+            ascWhen[i] = whenArr[n - 1 - i];
+            ascMsl[i] = mslArr[n - 1 - i];
+        }
+
+        var minSpan = (Sager.LEARN_WINDOW_SEC * Sager.LEARN_MIN_COVERAGE).toNumber();
+        var newMask = mask;
+        var lo = 0;
+        var hi = -1;
+        var lastTaken = 0;
+        // Time ascends with the index, so both bounds only ever move forward.
+        for (var c = 0; c < n; c++) {
+            var tc = ascWhen[c];
+            while (hi + 1 < n && ascWhen[hi + 1] <= tc + Sager.LEARN_LAG_SEC) { hi += 1; }
+            while (lo <= hi && ascWhen[lo] < tc - Sager.LEARN_LAG_SEC) { lo += 1; }
+            if (lo > c || hi < c) { continue; }
+            if ((ascWhen[hi] - ascWhen[lo]) < minSpan) { continue; }
+            if (lastTaken != 0 && (tc - lastTaken) < 3600) { continue; }
+            var solarHour = solarHourNow - (nowSec - tc).toFloat() / 3600.0;
+            newMask = Sager.foldResidual(bins, newMask, solarHour,
+                                         Sager.residualPa(ascMsl, lo, hi, c, solarHour, s2Amp));
+            lastTaken = tc;
+        }
+        return newMask;
+    }
+
+    hidden function getLongitude() as Float or Null {
+        var stored = Storage.getValue("lonDeg");
+        return (stored != null) ? (stored as Float) : null;
+    }
+
     // Cached latitude drives both tide harmonics. Refreshed on GPS fix (onPosition).
     hidden function getLatitude() as Float or Null {
         var stored = Storage.getValue("latDeg");
