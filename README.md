@@ -25,6 +25,8 @@ The forecast engine is based on Raymond Sager's meteorological method (1960s, US
 
 **26 forecast conditions** range from *Settled fine* (0) to *Stormy, much rain* (25).
 
+> **Provenance, honestly:** the 26 condition labels are **Zambretti's** vocabulary, not Sager's, and the three lookup tables are hand-built rather than transcribed from Sager's published matrix. Full Sager takes five inputs - wind direction, *wind-direction change*, barometer reading, barometer change and present weather - and this engine feeds it two. The precipitation percentages have no published source. Neither method's original calibration survives that, which is what the measured skill below reflects.
+
 ### Barometric Trend Analysis
 
 The rising / steady / falling input to Sager is not a naive "now minus three hours ago" comparison - it comes from a small on-device regression pipeline run over the barometer's stored history:
@@ -37,15 +39,25 @@ The rising / steady / falling input to Sager is not a naive "now minus three hou
 
 A glitched elevation sample cannot poison the series: the sea-level reduction clamps altitude to a physical range. This pipeline replaces an earlier point-sample second-derivative ("acceleration") trigger that over-reacted to short pressure wiggles and to altitude changes.
 
-### Expected Accuracy
+### Measured Skill
 
-Barometric forecasting precision varies by terrain and weather pattern:
+Earlier revisions of this file quoted accuracy figures of 65-85%. Those were never measured. They have been replaced with a verification against a rain gauge.
 
-| Scenario | Accuracy | Lead time | Notes |
-|---|---|---|---|
-| **Urban / lowland** | ~80% | 2-4 h | Stable environment, pressure patterns read cleanly; the short-window front detector catches convective buildups 30-60 min earlier |
-| **Mountain hiking (1500-2500 m)** | ~65% | 1-3 h | Trends stay valid as you change elevation (readings are sea-level-reduced), but altitude thermals and terrain-funnelled winds still add noise; local effects limit prediction. Always cross-check official mountain forecasts. |
-| **Coastal / seaside** | ~85% | 3-6 h | Flat terrain, clean pressure gradients - best case for barometric forecasting. Fronts approach predictably and the front detector works well here. |
+Scored over 40 days against a co-located weather station - 926 hourly forecasts, 13.2% of 6-hour windows wet. The run below is the no-bearing configuration, which is what the engine falls back to before you have pointed the watch into the wind:
+
+| Metric | Value | Reading |
+|---|---|---|
+| Brier score | 0.159 | climatology scores 0.114 |
+| Brier skill score | **-0.39** | negative: worse than always forecasting the average |
+| Reliability | 75% stated -> 25% observed | the stated probability is not a probability |
+| False-alarm ratio | 0.76 | three in four warnings did not verify |
+| Resolution | 0.002 | almost no information about *when* rain arrives |
+
+The barometric tendency carries essentially no 6-hour rain signal at the test site (rank correlation +0.00 against observed rain) but a clear 24-hour one (-0.68), so the forecast horizon is itself under review. The wind-bearing path is not separately verified: the reference station logs wind direction without long-term statistics, so there is no history to score it against yet.
+
+A calibrated replacement is in progress. It is blocked on data rather than on code: 40 days spans a single regime change, so every cross-validation fold trains on a climate the held-out fold does not share.
+
+> **Read the forecast as a barometer readout with a label attached, not as a probability of rain.**
 
 ## Features
 
@@ -120,8 +132,8 @@ Configurable from the Garmin Connect app:
 | Setting | Description | Default |
 |---|---|---|
 | **Device pressure correction** | Offset added to the barometer reading (hPa) | 0 |
-| **Trend threshold** | Pressure change below this is treated as "steady" (hPa) | 0.5 |
-| **Trend time window** | Hours of pressure history used to determine the trend | 4 |
+| **Trend threshold** | Rate of pressure change below which the trend reads "steady" (hPa/h) | 0.22 |
+| **Trend time window** | Hours of pressure history used to determine the trend | 6 |
 | **Display details** | Show temperature and extended info on the widget face | Yes |
 | **Default hemisphere** | Hemisphere fallback when GPS is not available | Northern |
 | **Glance title** | Custom title displayed in the glance view | Weather |
